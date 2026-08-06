@@ -2,9 +2,17 @@
 
 **Um "uv para Java" — CLI nativo em Rust para dependências, JDK e build de projetos Java single-module, sem setup.**
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-stable-orange?style=for-the-badge&logo=rust&logoColor=white" alt="Rust"/>
+  <img src="https://img.shields.io/badge/Java-single--module-blue?style=for-the-badge&logo=openjdk&logoColor=white" alt="Java"/>
+  <img src="https://img.shields.io/badge/status-em%20desenvolvimento-yellow?style=for-the-badge" alt="Status"/>
+  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge" alt="License"/>
+  <!-- quando houver release: badge de versão do GitHub Releases (seção 15 da arquitetura) -->
+  <!-- <img src="https://img.shields.io/github/v/release/nadezhdkov/jvm-fast?style=for-the-badge" alt="Release"/> -->
+</p>
+
 [![rust](https://github.com/nadezhdkov/jvm-fast/actions/workflows/rust.yml/badge.svg)](https://github.com/nadezhdkov/jvm-fast/actions/workflows/rust.yml)
 [![docs](https://github.com/nadezhdkov/jvm-fast/actions/workflows/docs.yml/badge.svg)](https://github.com/nadezhdkov/jvm-fast/actions/workflows/docs.yml)
-[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licença)
 
 ---
 
