@@ -46,13 +46,19 @@ I/O / global config parsing that don't exist yet); manifest parsing
 version range parsing (`src/version/`: `SemVer`, `VersionRequirement::parse`
 handles exact/`^`/`~` per seção 6.1, including the pre-release-exclusion
 rule — not yet wired into the manifest/resolver, since there's no "available
-versions" source to filter against until POM/metadata fetching exists).
+versions" source to filter against until POM/metadata fetching exists);
+BOM resolution (`src/bom/`: `resolve_boms` builds the `coordinate → version`
+table per seção 3.3 — first-BOM-wins, first-entry-wins, transitive import
+with the depth-10 limit — behind a `PomProvider` trait so the table-building
+logic is testable with in-memory fixture POMs; no real POM fetching wired in
+yet, and not yet wired into manifest/resolver either).
 
 Next milestones, in order (each independently pickable in a future session):
-BOM resolution pass (seção 3.3) → exclusions (seção 3.4) → transitive graph
-construction + POM fetching → mediation algorithm (seção 6.2, tested against
-the seção 13.1 table) → lockfile read/write + manifest-hash (seção 4, first
-real `Workspace` constructor) → content-addressable cache + SQLite index
+exclusions (seção 3.4) → transitive graph construction + real POM fetching
+(first concrete `PomProvider`, using `quick-xml`) → mediation algorithm
+(seção 6.2, tested against the seção 13.1 table) → lockfile read/write +
+manifest-hash (seção 4, first real `Workspace` constructor) →
+content-addressable cache + SQLite index
 (seção 5) → parallel download via reqwest/tokio (first `async` code in the
 codebase) → CLI command wiring for `install`/`add`/`remove`/`update`/`tree`/
 `why` → credentials/auth (seção 3.2) → global `config.toml` loading (seção
