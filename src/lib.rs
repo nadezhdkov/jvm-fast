@@ -1,6 +1,7 @@
 pub mod bom;
 pub mod cache;
 pub mod domain;
+pub mod download;
 pub mod exclusion;
 pub mod graph;
 pub mod lockfile;

@@ -81,12 +81,13 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/version` | Version ranges (`^`/`~`/exato) e exclusão de pré-release (seção 6.1) | Implementado, usado pela mediação para comparar versões |
 | `src/bom` | Tabela `coordenada → versão` a partir de BOMs declarados (seção 3.3) | Implementado, ligado ao grafo |
 | `src/exclusion` | Filtro de transitivas excluídas (seção 3.4), agregado por workspace | Implementado, ligado ao grafo |
-| `src/pom` | Parser real de `pom.xml` (`quick-xml`) + `PomProvider` compartilhado | Implementado — sem interpolação de propriedade nem herança de `<parent>` |
+| `src/pom` | Parser real de `pom.xml` (`quick-xml`) + `PomProvider` compartilhado + `HttpPomProvider` (fetch via layout Maven, síncrono) | Implementado — sem interpolação de propriedade nem herança de `<parent>` |
 | `src/graph` | Constrói o grafo de candidatos do workspace (seção 6.2, passo 4) | Implementado, ligado à mediação |
 | `src/mediation` | Decide o vencedor de cada conflito (seção 6.2, passo 5) — produz `DependencyGraph`/`ResolvedNode` | Implementado, ligado ao lockfile |
 | `src/lockfile` | Hash de manifesto, `DependencyGraph` → `Lockfile`, leitura/escrita de `project.lock` (seção 4) | Implementado — `sha256`/`resolved-from` ainda vêm de fora, sem download real |
 | `src/workspace` | `load_workspace` — primeiro construtor real de `Workspace` | Implementado — ainda não decide sozinho se o lock está válido |
-| `src/cache` | Cache de artefatos content-addressable + índice SQLite (seção 5) | Implementado — escrita atômica testada com bytes em memória, sem download real ainda |
+| `src/cache` | Cache de artefatos content-addressable + índice SQLite (seção 5) | Implementado, ligado ao download |
+| `src/download` | Download paralelo de artefatos via `reqwest`/`tokio` (seção 6.2 passo 6) | Implementado — primeiro código `async` do projeto |
 
 ---
 
@@ -191,7 +192,7 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — mediação de conflitos (seção 6.2) — `DependencyGraph`/`ResolvedNode` reais
 - [x] Marco — lockfile read/write + manifest-hash (seção 4) — primeiro `Workspace` real
 - [x] Marco — cache content-addressable + índice SQLite (seção 5)
-- [ ] Marco — download paralelo via reqwest/tokio (seção 6.2)
+- [x] Marco — download paralelo via reqwest/tokio + `HttpPomProvider` (seção 6.2)
 - [ ] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
 - [ ] Fase 2 — gerenciamento de JDK
 - [ ] Fase 3 — build e execução

@@ -1,7 +1,9 @@
 mod error;
+mod http;
 mod xml;
 
 pub use error::PomParseError;
+pub use http::{HttpPomError, HttpPomProvider};
 pub use xml::parse_pom_xml;
 
 /// Uma dependência declarada em `<dependencies>` — versão sempre concreta

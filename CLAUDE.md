@@ -108,25 +108,43 @@ left behind; `CacheStore::artifact_path` builds the seção 5 two-level
 `find_artifact`/`list_cached_versions` wrap a `rusqlite` (bundled SQLite,
 no system dependency) `index.db` with an `artifacts(coordinate, version,
 sha256, filename)` table, `INSERT ... ON CONFLICT DO UPDATE` so concurrent
-writers never race on existence-checks. No real download exists yet, so
-nothing calls this module end-to-end — it's exercised only by tests writing
-in-memory byte slices; wiring it to actual HTTP responses is the next
-milestone).
+writers never race on existence-checks); parallel download + real HTTP POM
+fetching (`src/download/`: `DownloadClient` — the codebase's first `async`
+code, justified because seção 6.2 passo 6 genuinely needs concurrency;
+`download_many` caps concurrency via `tokio::Semaphore` at a caller-supplied
+limit, tested by asserting peak-concurrent-handlers against a local mock
+HTTP server never exceeds the configured cap; retries on request failure up
+to `NetworkConfig.max_retries`; `NetworkConfig.proxy` is wired into the
+`reqwest::Client` builder now that a client actually gets built. Per-host
+throttling (doc also documents a per-repository-host limit, separate from
+the global pool) is deliberately **not** implemented yet — `ArtifactRequest`
+has no repository identity to throttle by, since `[repositories]` parsing
+isn't threaded from `ProjectManifest` into `Module` yet, a pre-existing gap
+noted in `src/manifest/dto.rs`. `src/pom/http.rs`: `HttpPomProvider` — a
+real `PomProvider` over Maven repository layout (`{group}/{artifact}/
+{version}/{artifact}-{version}.pom`), deliberately **synchronous**
+(`reqwest::blocking`), not `async`, since POM fetching during
+`graph::build_graph`'s BFS is inherently sequential — no real concurrency to
+justify `async` there, per CONVENTIONS.md "não colocar async por hábito".
+Both new HTTP paths are tested against a hand-rolled local mock HTTP server
+(`tests/support/mod.rs`, raw `TcpListener`, GET-only) — no crate added
+just for this, and never touches real Maven Central per CONVENTIONS.md.
+`build_lockfile`'s `checksums`/`resolved_from` still take caller-supplied
+values — nothing yet orchestrates parse → resolve → download → lock
+end-to-end; that first orchestration is the CLI milestone below).
 
 Next milestones, in order (each independently pickable in a future session):
-parallel download via reqwest/tokio (first `async` code in the codebase,
-also where `build_graph` gets a real HTTP-backed `PomProvider`, where
-`cache::CacheStore`/`cache::record_artifact` get real artifact bytes to
-write instead of test fixtures, and where `build_lockfile`'s
-`checksums`/`resolved_from` finally get real values instead of
-caller-supplied fixtures) → CLI command wiring for
-`install`/`add`/`remove`/`update`/`tree`/`why` (first orchestrator calling
-`workspace::load_workspace` → `lockfile::is_lockfile_valid` →
-`graph::build_graph` → `mediation::mediate` → `lockfile::build_lockfile` end
-to end) → credentials/auth (seção 3.2) → global `config.toml` loading
-(seção 3.5, overrides `WorkspaceConfig::default()`) → resolving `^`/`~`
-ranges against real repository metadata (fills the `UnresolvedVersionRange`
-gap above).
+CLI command wiring for `install`/`add`/`remove`/`update`/`tree`/`why` (first
+orchestrator calling `workspace::load_workspace` → `lockfile::is_lockfile_valid`
+→ `graph::build_graph` (with `pom::HttpPomProvider`) → `mediation::mediate`
+→ `download::DownloadClient::download_many` → `lockfile::build_lockfile` end
+to end — this is also where `checksums`/`resolved_from` finally stop being
+caller-supplied fixtures) → credentials/auth (seção 3.2) → global
+`config.toml` loading (seção 3.5, overrides `WorkspaceConfig::default()`) →
+resolving `^`/`~` ranges against real repository metadata (fills the
+`UnresolvedVersionRange` gap in `graph::build_graph`) → per-repository-host
+download throttling (fills the gap noted above, once `[repositories]`
+reaches `Module`).
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,
