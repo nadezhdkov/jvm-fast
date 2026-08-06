@@ -3,41 +3,13 @@ mod error;
 pub use error::BomResolutionError;
 
 use crate::domain::module::BomReference;
+use crate::pom::{ParsedPom, PomProvider};
 use std::collections::HashMap;
 
 /// Profundidade máxima de import transitivo de BOMs (docs/architecture.md
 /// seção 3.3) — evita loops e complexidade de debug. A raiz declarada em
 /// `[boms]` conta como profundidade 0; cada import transitivo soma 1.
 pub const MAX_IMPORT_DEPTH: u32 = 10;
-
-/// Uma entrada de `<dependencyManagement>` já interpretada. Este módulo não
-/// faz parsing de XML — isso é responsabilidade do marco de fetch de POM
-/// (`quick-xml`, ainda não implementado); aqui a lógica de resolução de
-/// BOM opera sobre um modelo já parseado, fornecido por quem implementar
-/// `PomProvider`.
-#[derive(Clone)]
-pub struct ManagedDependencyEntry {
-    pub coordinate: String,
-    pub version: String,
-    /// `true` para uma entrada `<type>pom</type><scope>import</scope>` —
-    /// import transitivo de outro BOM, não uma versão gerenciada direta.
-    pub is_bom_import: bool,
-}
-
-#[derive(Clone)]
-pub struct ParsedPom {
-    pub managed_dependencies: Vec<ManagedDependencyEntry>,
-}
-
-/// Abstrai de onde um POM vem — fixture local em teste hoje, HTTP + cache
-/// (seção 5/6.2) quando o marco de download existir.
-pub trait PomProvider {
-    fn fetch(
-        &self,
-        coordinate: &str,
-        version: &str,
-    ) -> Result<ParsedPom, Box<dyn std::error::Error + Send + Sync>>;
-}
 
 /// Constrói a tabela `coordenada → versão` a partir dos BOMs declarados em
 /// `[boms]` (seção 3.3) — chamado antes da resolução do grafo de

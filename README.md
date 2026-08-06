@@ -79,8 +79,10 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/domain` | Modelo de domínio da arquitetura (seção 3.1): `Module`, `Workspace`, `DependencyGraph`, `Lockfile` | Tipos declarados — `Workspace`/`DependencyGraph`/`Lockfile` ainda sem construtor |
 | `src/manifest` | Parsing de `project.toml` em `Module`, com erros tipados | Implementado |
 | `src/version` | Version ranges (`^`/`~`/exato) e exclusão de pré-release (seção 6.1) | Implementado — ainda não ligado ao resolvedor |
-| `src/bom` | Tabela `coordenada → versão` a partir de BOMs declarados (seção 3.3) | Implementado — ainda não ligado ao resolvedor |
-| `src/exclusion` | Filtro de transitivas excluídas (seção 3.4), agregado por workspace | Implementado — ainda não ligado à construção do grafo |
+| `src/bom` | Tabela `coordenada → versão` a partir de BOMs declarados (seção 3.3) | Implementado, ligado ao grafo |
+| `src/exclusion` | Filtro de transitivas excluídas (seção 3.4), agregado por workspace | Implementado, ligado ao grafo |
+| `src/pom` | Parser real de `pom.xml` (`quick-xml`) + `PomProvider` compartilhado | Implementado — sem interpolação de propriedade nem herança de `<parent>` |
+| `src/graph` | Constrói o grafo de transitivas do workspace (seção 6.2, passo 4) | Implementado — produz candidatos com todas as versões pedidas; mediação (quem vence) é o próximo marco |
 
 ---
 
@@ -181,7 +183,7 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — version ranges `^`/`~` (seção 6.1)
 - [x] Marco — resolução de BOMs (seção 3.3)
 - [x] Marco — exclusions (seção 3.4)
-- [ ] Marco — grafo de transitivas + fetch de POM
+- [x] Marco — grafo de transitivas + fetch real de POM (`quick-xml`)
 - [ ] Marco — mediação de conflitos (seção 6.2)
 - [ ] Marco — lockfile read/write (seção 4)
 - [ ] Marco — cache + download paralelo (seção 5, 6.2)

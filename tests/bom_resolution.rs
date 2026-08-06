@@ -1,7 +1,6 @@
-use jvmfast::bom::{
-    resolve_boms, BomResolutionError, ManagedDependencyEntry, ParsedPom, PomProvider,
-};
+use jvmfast::bom::{resolve_boms, BomResolutionError};
 use jvmfast::domain::BomReference;
+use jvmfast::pom::{ManagedDependencyEntry, ParsedPom, PomProvider};
 use std::collections::HashMap;
 
 struct FixturePomProvider {
@@ -24,6 +23,7 @@ impl FixturePomProvider {
         self.poms.insert(
             (coordinate.to_string(), version.to_string()),
             ParsedPom {
+                dependencies: Vec::new(),
                 managed_dependencies: entries,
             },
         );

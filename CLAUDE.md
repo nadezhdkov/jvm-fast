@@ -55,19 +55,33 @@ yet, and not yet wired into manifest/resolver either); exclusions
 (`src/exclusion/`: `merge_exclusions` combines `Module.exclusions` across
 `&[Module]` into one `coordinate → excluded-set` table, `is_excluded` checks
 a parent/candidate edge against it per seção 3.4 — no wildcard support, by
-design; not yet wired into graph construction, since that doesn't exist).
+design); real POM parsing (`src/pom/`: `ParsedPom`/`PomDependency`/
+`ManagedDependencyEntry`/`PomProvider` — the shared abstraction `bom` and
+`graph` both fetch through — plus `parse_pom_xml`, a real `quick-xml`
+event-driven parser for `<dependencies>` and `<dependencyManagement>`; no
+`${property}` interpolation, no `<parent>` inheritance, by design); graph
+construction (`src/graph/`: `build_graph` walks each module's declared
+dependencies and their transitives via `PomProvider`, applying
+`exclusion::is_excluded` before a transitive becomes a candidate and
+resolving `VersionReq::BomManaged` against the BOM table — produces a
+`CandidateGraph` with **all** requested versions per coordinate, deliberately
+*not* the doc's `ResolvedNode`/`DependencyGraph`, since those require
+`selected`/`mediation_reason` that only mediation, the next milestone, can
+honestly produce; a `^`/`~` range reaching a dependency here is a typed
+`GraphError::UnresolvedVersionRange`, not silently treated as literal).
 
 Next milestones, in order (each independently pickable in a future session):
-transitive graph construction + real POM fetching (first concrete
-`PomProvider`, using `quick-xml`, wiring in both `bom::resolve_boms` and
-`exclusion::is_excluded`) → mediation algorithm (seção 6.2, tested against
-the seção 13.1 table) → lockfile read/write +
+mediation algorithm (seção 6.2 passo 5, tested against the seção 13.1 table
+— consumes `graph::CandidateGraph` and produces the real
+`domain::DependencyGraph`/`ResolvedNode`) → lockfile read/write +
 manifest-hash (seção 4, first real `Workspace` constructor) →
-content-addressable cache + SQLite index
-(seção 5) → parallel download via reqwest/tokio (first `async` code in the
-codebase) → CLI command wiring for `install`/`add`/`remove`/`update`/`tree`/
-`why` → credentials/auth (seção 3.2) → global `config.toml` loading (seção
-3.5).
+content-addressable cache + SQLite index (seção 5) → parallel download via
+reqwest/tokio (first `async` code in the codebase, also where `build_graph`
+gets a real HTTP-backed `PomProvider`) → CLI command wiring for
+`install`/`add`/`remove`/`update`/`tree`/`why` → credentials/auth (seção
+3.2) → global `config.toml` loading (seção 3.5) → resolving `^`/`~` ranges
+against real repository metadata (fills the `UnresolvedVersionRange` gap
+above).
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

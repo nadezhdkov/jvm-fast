@@ -13,12 +13,14 @@ pub struct DependencyGraph {
     pub edges: Vec<GraphEdge>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphEdge {
     pub from: NodeId,
     pub to: NodeId,
     pub kind: EdgeKind,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdgeKind {
     ModuleDeclared,
     External,
@@ -34,6 +36,7 @@ pub struct ResolvedNode {
     pub mediation_reason: MediationReason,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VersionRequest {
     pub version: String,
     pub origin_module: String,
