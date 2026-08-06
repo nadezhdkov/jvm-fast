@@ -1,0 +1,7 @@
+[project]
+name = "invalid-dependency-project"
+version = "0.1.0"
+java-version = "21"
+
+[dependencies]
+"com.fasterxml.jackson.core:jackson-databind" = false

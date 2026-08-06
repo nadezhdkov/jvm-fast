@@ -1,0 +1,29 @@
+[project]
+name = "licitare-batch-processor"
+version = "0.3.0"
+java-version = "21"
+source-encoding = "UTF-8"
+
+[dependencies]
+"com.fasterxml.jackson.core:jackson-databind" = "2.17.0"
+"org.slf4j:slf4j-api" = "2.0.13"
+
+[dev-dependencies]
+"org.junit.jupiter:junit-jupiter" = "5.10.2"
+"org.assertj:assertj-core" = "3.25.3"
+
+[boms]
+"com.fasterxml.jackson:jackson-bom" = "2.17.0"
+
+[exclusions]
+"org.apache.httpcomponents:httpclient" = [
+    "commons-logging:commons-logging",
+]
+
+[repositories]
+default = "https://repo1.maven.org/maven2"
+internal = "https://nexus.empresa.com/repository/maven-releases"
+
+[run]
+main-class = "br.com.licitare.batch.Main"
+jvm-args = ["-Xmx512m"]

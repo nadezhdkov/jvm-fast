@@ -1,0 +1,7 @@
+[project]
+name = "invalid-coordinate-project"
+version = "0.1.0"
+java-version = "21"
+
+[dependencies]
+"jackson-databind-without-group" = "2.17.0"

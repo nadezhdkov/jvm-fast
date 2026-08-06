@@ -1,0 +1,21 @@
+[package]
+name = "jvmfast"
+version = "0.1.0"
+edition = "2021"
+description = "jvm-fast: gerenciador de dependências e build para projetos Java single-module, sem setup"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nadezhdkov/jvm-fast"
+
+[[bin]]
+name = "jvmfast"
+path = "src/main.rs"
+
+[lib]
+name = "jvmfast"
+path = "src/lib.rs"
+
+[dependencies]
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"

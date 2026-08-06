@@ -1,0 +1,7 @@
+[project]
+name = "minimal-project"
+version = "0.1.0"
+java-version = "21"
+
+[dependencies]
+"org.slf4j:slf4j-api" = "2.0.13"

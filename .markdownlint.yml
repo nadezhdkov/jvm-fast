@@ -1,0 +1,12 @@
+# Configuração mínima — docs deste projeto são prosa técnica longa,
+# então regras pensadas para READMEs curtos (limite de linha, por exemplo)
+# geram ruído sem valor real aqui.
+
+default: true
+
+MD013: false # limite de comprimento de linha — prosa longa é intencional
+MD033: false # HTML inline — badges/templates de README usam <p>/<img>
+MD032: false # listas coladas ao parágrafo anterior sem linha em branco — estilo já usado em todo o architecture.md, não vale o diff de reformatar retroativamente
+MD060: false # estilo de espaçamento em pipes de tabela — as tabelas já usam "| a | b |" espaçado de forma consistente; a regra pede o oposto ("a|b")
+MD024:
+  siblings_only: true # permite headings repetidos em seções diferentes (ex. "Instalação")

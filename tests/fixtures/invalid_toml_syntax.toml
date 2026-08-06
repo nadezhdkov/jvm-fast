@@ -1,0 +1,4 @@
+[project]
+name = "broken-project
+version = "0.1.0"
+java-version = "21"
