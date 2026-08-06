@@ -41,18 +41,22 @@ Implemented: domain types (`src/domain/`: `Module`, `Dependency`,
 `VersionReq`, `BomReference`, `DependencyGraph`, `GraphEdge`, `ResolvedNode`,
 `Lockfile`, `Workspace`/`WorkspaceConfig` — the latter three are declared per
 seção 3.1/3.5/4 but have **no constructor yet**, since they need lockfile
-I/O / global config parsing that don't exist yet) and manifest parsing
-(`src/manifest/`: `parse_module(path) -> Result<Module, ManifestError>`).
+I/O / global config parsing that don't exist yet); manifest parsing
+(`src/manifest/`: `parse_module(path) -> Result<Module, ManifestError>`);
+version range parsing (`src/version/`: `SemVer`, `VersionRequirement::parse`
+handles exact/`^`/`~` per seção 6.1, including the pre-release-exclusion
+rule — not yet wired into the manifest/resolver, since there's no "available
+versions" source to filter against until POM/metadata fetching exists).
 
 Next milestones, in order (each independently pickable in a future session):
-version range parsing (seção 6.1) → BOM resolution pass (seção 3.3) →
-exclusions (seção 3.4) → transitive graph construction + POM fetching →
-mediation algorithm (seção 6.2, tested against the seção 13.1 table) →
-lockfile read/write + manifest-hash (seção 4, first real `Workspace`
-constructor) → content-addressable cache + SQLite index (seção 5) →
-parallel download via reqwest/tokio (first `async` code in the codebase) →
-CLI command wiring for `install`/`add`/`remove`/`update`/`tree`/`why` →
-credentials/auth (seção 3.2) → global `config.toml` loading (seção 3.5).
+BOM resolution pass (seção 3.3) → exclusions (seção 3.4) → transitive graph
+construction + POM fetching → mediation algorithm (seção 6.2, tested against
+the seção 13.1 table) → lockfile read/write + manifest-hash (seção 4, first
+real `Workspace` constructor) → content-addressable cache + SQLite index
+(seção 5) → parallel download via reqwest/tokio (first `async` code in the
+codebase) → CLI command wiring for `install`/`add`/`remove`/`update`/`tree`/
+`why` → credentials/auth (seção 3.2) → global `config.toml` loading (seção
+3.5).
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,
