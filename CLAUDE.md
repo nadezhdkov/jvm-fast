@@ -4,13 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository state
 
-This repository has a bootstrapped Rust CLI skeleton (`Cargo.toml`, `src/`)
-implementing the domain model (seção 3.1) and `project.toml` manifest
-parsing into `Module`. Resolution (version ranges, BOMs, exclusions,
-transitive graph, mediation), lockfile I/O, the content-addressable cache,
-HTTP download, and CLI subcommands (`install`/`add`/`remove`/`update`/
-`tree`/`why`) are **not yet implemented** — `docs/architecture.md` seção 12
-and the roadmap below are the spec to implement against for those.
+**Fase 1 (docs/architecture.md seção 12 — "resolução e cache") is
+complete.** The `jvmfast` binary resolves `project.toml`, downloads
+artifacts over real HTTP, and writes/reads `project.lock`, end to end, via
+`install`/`update`/`add`/`remove`/`tree`/`why`. Fase 2 (JDK management),
+Fase 3 (build/run/test), and Fase 4 (interop) are **not started** —
+`docs/architecture.md` seção 12 and the roadmap below are the spec to
+implement against for those. See "Roadmap" below for the specific gaps left
+inside Fase 1 itself (targeted `update <coord>`, `add` without an explicit
+version, dev-dependencies, multi-repository fallback, per-host download
+throttling) — each is a typed, rejected-not-faked error today, not silent
+scope creep.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -37,114 +41,97 @@ and the roadmap below are the spec to implement against for those.
 
 ## Roadmap — what's implemented vs. next
 
-Implemented: domain types (`src/domain/`: `Module`, `Dependency`,
-`VersionReq`, `BomReference`, `DependencyGraph`, `GraphEdge`, `ResolvedNode`,
-`Lockfile`, `Workspace`/`WorkspaceConfig` — the latter three are declared per
-seção 3.1/3.5/4 but have **no constructor yet**, since they need lockfile
-I/O / global config parsing that don't exist yet); manifest parsing
-(`src/manifest/`: `parse_module(path) -> Result<Module, ManifestError>`);
-version range parsing (`src/version/`: `SemVer`, `VersionRequirement::parse`
-handles exact/`^`/`~` per seção 6.1, including the pre-release-exclusion
-rule — not yet wired into the manifest/resolver, since there's no "available
-versions" source to filter against until POM/metadata fetching exists);
-BOM resolution (`src/bom/`: `resolve_boms` builds the `coordinate → version`
-table per seção 3.3 — first-BOM-wins, first-entry-wins, transitive import
-with the depth-10 limit — behind a `PomProvider` trait so the table-building
-logic is testable with in-memory fixture POMs; no real POM fetching wired in
-yet, and not yet wired into manifest/resolver either); exclusions
-(`src/exclusion/`: `merge_exclusions` combines `Module.exclusions` across
-`&[Module]` into one `coordinate → excluded-set` table, `is_excluded` checks
-a parent/candidate edge against it per seção 3.4 — no wildcard support, by
-design); real POM parsing (`src/pom/`: `ParsedPom`/`PomDependency`/
-`ManagedDependencyEntry`/`PomProvider` — the shared abstraction `bom` and
-`graph` both fetch through — plus `parse_pom_xml`, a real `quick-xml`
-event-driven parser for `<dependencies>` and `<dependencyManagement>`; no
-`${property}` interpolation, no `<parent>` inheritance, by design); graph
-construction (`src/graph/`: `build_graph` walks each module's declared
-dependencies and their transitives via `PomProvider`, applying
-`exclusion::is_excluded` before a transitive becomes a candidate and
-resolving `VersionReq::BomManaged` against the BOM table — produces a
-`CandidateGraph` with **all** requested versions per coordinate, deliberately
-*not* the doc's `ResolvedNode`/`DependencyGraph`, since those require
-`selected`/`mediation_reason` that only mediation, the next milestone, can
-honestly produce; a `^`/`~` range reaching a dependency here is a typed
-`GraphError::UnresolvedVersionRange`, not silently treated as literal);
-mediation (`src/mediation/`: `mediate` consumes a `graph::CandidateGraph`
-and produces the real `domain::DependencyGraph`/`ResolvedNode` — the first
-time those types are actually constructed, not just declared. Fixed
-precedence `depth ASC → version DESC → deterministic tie-break`, matching
-the seção 13.1 test table including diamond dependency and depth-wins-over-
-higher-version end to end. Each `VersionRequest` is its own candidate — two
-requests for the identical version from different modules still go through
-`DeterministicTieBreak`, per seção 13.1's own category naming, not treated
-as conflict-free. Version comparison reuses `version::SemVer` numerically
-when both sides parse — verified against the classic "2.9.0" vs "2.10.0"
-lexicographic trap — falling back to plain string comparison, deterministic
-but not "correct," for non-semver Maven versions); lockfile (`src/lockfile/`:
-`compute_manifest_hash` — SHA-256 over the workspace's aggregated
-`project.toml` contents (seção 6.2 passo 2) — `is_lockfile_valid`,
-`build_lockfile` converts a mediated `DependencyGraph` into `Lockfile`
-(`sha256`/`resolved_from` are caller-supplied, since real artifact download
-doesn't exist yet — a missing checksum is a typed `MissingChecksum` error,
-never a fabricated value), and `read_lockfile`/`write_lockfile` — `Lockfile`/
-`LockedPackage`/`LockedRequest` (`src/domain/lockfile.rs`) now derive
-`Serialize`/`Deserialize` with the seção 4 kebab-case field names; `Module`
-also picked up `Debug`/`Clone`/`PartialEq` in this pass); first real
-`Workspace` constructor (`src/workspace/load_workspace`: parses the root
-`project.toml`, loads `project.lock` if present or defaults to an honestly
-empty `Lockfile` with the freshly computed hash — never a fabricated
-"resolved" state — and builds `WorkspaceConfig` from the seção 3.5
-documented defaults, including `concurrent_downloads` via
-`std::thread::available_parallelism()`, no `num_cpus` crate needed. Doesn't
-decide lock validity itself — that's still `lockfile::is_lockfile_valid`,
-called by whoever orchestrates resolution next); content-addressable cache +
-SQLite index (`src/cache/`: `CacheStore::write_artifact` — temp file in the
-final shard directory → verify SHA-256 → atomic rename per seção 5.1, skips
-the write entirely if the hash-derived path already exists, since identical
-content at an identical path can never be a corruption risk — a mismatched
-checksum is a typed `ChecksumMismatch` error, never a partially-written file
-left behind; `CacheStore::artifact_path` builds the seção 5 two-level
-`sha256/aa/bb/<hash>/<filename>` shard path; `open_index`/`record_artifact`/
-`find_artifact`/`list_cached_versions` wrap a `rusqlite` (bundled SQLite,
-no system dependency) `index.db` with an `artifacts(coordinate, version,
-sha256, filename)` table, `INSERT ... ON CONFLICT DO UPDATE` so concurrent
-writers never race on existence-checks); parallel download + real HTTP POM
-fetching (`src/download/`: `DownloadClient` — the codebase's first `async`
-code, justified because seção 6.2 passo 6 genuinely needs concurrency;
-`download_many` caps concurrency via `tokio::Semaphore` at a caller-supplied
-limit, tested by asserting peak-concurrent-handlers against a local mock
-HTTP server never exceeds the configured cap; retries on request failure up
-to `NetworkConfig.max_retries`; `NetworkConfig.proxy` is wired into the
-`reqwest::Client` builder now that a client actually gets built. Per-host
-throttling (doc also documents a per-repository-host limit, separate from
-the global pool) is deliberately **not** implemented yet — `ArtifactRequest`
-has no repository identity to throttle by, since `[repositories]` parsing
-isn't threaded from `ProjectManifest` into `Module` yet, a pre-existing gap
-noted in `src/manifest/dto.rs`. `src/pom/http.rs`: `HttpPomProvider` — a
-real `PomProvider` over Maven repository layout (`{group}/{artifact}/
-{version}/{artifact}-{version}.pom`), deliberately **synchronous**
-(`reqwest::blocking`), not `async`, since POM fetching during
-`graph::build_graph`'s BFS is inherently sequential — no real concurrency to
-justify `async` there, per CONVENTIONS.md "não colocar async por hábito".
-Both new HTTP paths are tested against a hand-rolled local mock HTTP server
-(`tests/support/mod.rs`, raw `TcpListener`, GET-only) — no crate added
-just for this, and never touches real Maven Central per CONVENTIONS.md.
-`build_lockfile`'s `checksums`/`resolved_from` still take caller-supplied
-values — nothing yet orchestrates parse → resolve → download → lock
-end-to-end; that first orchestration is the CLI milestone below).
+**Fase 1 is fully implemented**, module by module:
 
-Next milestones, in order (each independently pickable in a future session):
-CLI command wiring for `install`/`add`/`remove`/`update`/`tree`/`why` (first
-orchestrator calling `workspace::load_workspace` → `lockfile::is_lockfile_valid`
-→ `graph::build_graph` (with `pom::HttpPomProvider`) → `mediation::mediate`
-→ `download::DownloadClient::download_many` → `lockfile::build_lockfile` end
-to end — this is also where `checksums`/`resolved_from` finally stop being
-caller-supplied fixtures) → credentials/auth (seção 3.2) → global
-`config.toml` loading (seção 3.5, overrides `WorkspaceConfig::default()`) →
-resolving `^`/`~` ranges against real repository metadata (fills the
-`UnresolvedVersionRange` gap in `graph::build_graph`) → per-repository-host
-download throttling (fills the gap noted above, once `[repositories]`
-reaches `Module`).
+- `src/domain/` — the seção 3.1 domain types (`Module`, `Dependency`,
+  `VersionReq`, `BomReference`, `DependencyGraph`, `GraphEdge`,
+  `ResolvedNode`, `Lockfile`, `Workspace`/`WorkspaceConfig`), all with real
+  constructors now (`workspace::load_workspace`, `mediation::mediate`).
+- `src/manifest/` — `parse_module`/`parse_repositories` parse `project.toml`
+  into `Module` + a raw `[repositories]` map (kept separate from `Module`
+  since seção 3.1 doesn't model repositories in the domain).
+- `src/version/` — `SemVer`, `VersionRequirement::parse` for exact/`^`/`~`
+  (seção 6.1). Not yet wired against real "available versions" metadata —
+  see `GraphError::UnresolvedVersionRange` below.
+- `src/bom/`, `src/exclusion/`, `src/pom/` — BOM table resolution (seção
+  3.3, first-BOM-wins/first-entry-wins, depth-10 import limit),
+  parent/candidate exclusion checks (seção 3.4, no wildcard support), and
+  real `quick-xml` POM parsing, all behind the shared `PomProvider` trait.
+- `src/graph/` + `src/mediation/` — `build_graph` walks transitives via
+  `PomProvider` into a `CandidateGraph`; `mediate` turns that into the real
+  `DependencyGraph`/`ResolvedNode` with fixed precedence `depth ASC →
+  version DESC → deterministic tie-break` (seção 6.2/13.1). Each
+  `VersionRequest` is its own mediation candidate, never deduplicated by
+  version string first.
+- `src/resolve/` — `resolve(modules, provider)` is the first function that
+  chains BOM resolution → exclusions → graph → mediation end to end; used
+  by every CLI command that needs a resolved graph.
+- `src/lockfile/` + `src/workspace/` — `compute_manifest_hash`,
+  `is_lockfile_valid`, `build_lockfile`, `read_lockfile`/`write_lockfile`,
+  and `load_workspace`/`current_manifest_hash` (the latter recomputes the
+  hash separately from whatever's loaded from an existing lock, since
+  `Workspace` doesn't carry both).
+- `src/cache/` — content-addressable `CacheStore` (SHA-256 two-level
+  sharding, atomic temp-file→verify→rename writes) + a `rusqlite`-backed
+  `index.db`.
+- `src/maven/` — shared Maven repository layout (`artifact_path`/
+  `artifact_url`/`artifact_filename`), used by both `pom::HttpPomProvider`
+  and `download`.
+- `src/download/` — `DownloadClient` (the codebase's first `async` code,
+  `tokio` + `reqwest`): `download_many` for concurrency-capped parallel JAR
+  downloads (seção 6.2 passo 6), `fetch_checksum` for the `.sha256` sidecar
+  a repository publishes next to each artifact (used when a lock doesn't
+  exist yet, so there's no `sha256` to verify against beforehand). Both
+  `download` and `pom::HttpPomProvider` are tested against a hand-rolled
+  local mock HTTP server (`tests/support/mod.rs`), never real Maven
+  Central, per CONVENTIONS.md.
+- `src/cli/` — the orchestrator and `clap` subcommands:
+  `install`/`update`/`add`/`remove`/`tree`/`why`. `install::install` is the
+  first place `workspace::load_workspace` → `lockfile::is_lockfile_valid` →
+  `resolve::resolve` (with `pom::HttpPomProvider`) →
+  `download::DownloadClient::download_many` → `lockfile::build_lockfile` →
+  `lockfile::write_lockfile` actually runs end to end; when the lock is
+  already valid, it skips resolution entirely and downloads straight from
+  `LockedPackage.resolved_from`/`sha256`, per the seção 6 flowchart.
+  `add`/`remove` edit `project.toml` via `toml_edit` (preserves comments/
+  formatting) then re-resolve. `tree`/`why` are pure-formatting functions
+  (`format_tree`/`format_why`) over an in-memory `DependencyGraph`, fully
+  unit-tested without I/O.
+
+**Known, deliberate gaps inside Fase 1** (typed errors, not silent
+shortcuts):
+
+- `jvmfast add <coord>` requires an explicit `@version` — "latest release"
+  needs repository metadata (`maven-metadata.xml`) lookup, not built yet;
+  rejected via `CliError::VersionOmittedNotSupported`.
+- `jvmfast add --dev` is rejected (`CliError::DevDependenciesNotSupported`)
+  — `[dev-dependencies]` parses in `ProjectManifest` but was never threaded
+  into `Module` (no field for it, by the seção 3.1 struct as documented).
+- `jvmfast update <coord>` (targeted update) is rejected
+  (`CliError::TargetedUpdateNotSupported`) — only a full re-resolution
+  (`jvmfast update`, no coordinate) is implemented.
+- `tree`/`why` re-resolve in memory rather than reconstructing purely from
+  an existing `project.lock` — `Lockfile`/`LockedPackage` don't persist
+  `mediation_reason`, so a lockfile-only reconstruction can't produce the
+  same diagnostic `why` promises without a schema extension first.
+- Only the `default` key of `[repositories]` is used, and only as a single
+  URL — no multi-repository fallback trying each declared repo in order,
+  and no per-repository-host download throttling (the doc mentions both;
+  `ArtifactRequest` has no repository identity to throttle by yet).
+- `graph::build_graph` still rejects `^`/`~` ranges reaching an actual
+  dependency as `GraphError::UnresolvedVersionRange` — no "available
+  versions" source exists to resolve them against.
+- `cache::cache_root()` resolves `~/.cache/jvmfast/` via `$HOME` only
+  (Unix); no cross-platform (`dirs` crate) support yet.
+
+Next milestones, in order — **Fase 2** (JDK management, seção 7):
+`jvmfast jdk install/list/use`, `java-version` resolution in the manifest
+(including the `"lts"` alias-to-concrete-version-at-first-resolve rule) →
+**Fase 3** (build/run/test, seção 8): `jvmfast build`/`run`/`test`,
+`javac` compilation, JUnit Platform Console integration → credentials/auth
+(seção 3.2) → global `config.toml` loading (seção 3.5, overrides
+`WorkspaceConfig::default()`) → the gaps listed above, each independently
+pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

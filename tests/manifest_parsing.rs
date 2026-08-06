@@ -1,5 +1,5 @@
 use jvmfast::domain::VersionReq;
-use jvmfast::manifest::{parse_module, ManifestError};
+use jvmfast::manifest::{parse_module, parse_repositories, ManifestError};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -69,4 +69,23 @@ fn invalid_coordinate_without_colon_is_rejected() {
 fn missing_manifest_file_returns_io_error() {
     let result = parse_module(&fixture("does_not_exist.toml"));
     assert!(matches!(result, Err(ManifestError::Io { .. })));
+}
+
+#[test]
+fn parse_repositories_reads_declared_named_repositories() {
+    let repositories = parse_repositories(&fixture("valid_full.toml")).expect("should parse");
+    assert_eq!(
+        repositories.get("default").map(String::as_str),
+        Some("https://repo1.maven.org/maven2")
+    );
+    assert_eq!(
+        repositories.get("internal").map(String::as_str),
+        Some("https://nexus.empresa.com/repository/maven-releases")
+    );
+}
+
+#[test]
+fn parse_repositories_is_empty_when_section_absent() {
+    let repositories = parse_repositories(&fixture("valid_minimal.toml")).expect("should parse");
+    assert!(repositories.is_empty());
 }

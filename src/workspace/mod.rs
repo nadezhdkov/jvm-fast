@@ -48,3 +48,20 @@ pub fn load_workspace(root: &Path) -> Result<Workspace, WorkspaceLoadError> {
         config: WorkspaceConfig::default(),
     })
 }
+
+/// Recalcula o manifest-hash "agora" dos manifestos do workspace, para
+/// comparar contra `workspace.lockfile.manifest_hash` via
+/// `lockfile::is_lockfile_valid` (seção 6.2 passo 2). Separado de
+/// `load_workspace` de propósito: quando um `project.lock` já existe em
+/// disco, `load_workspace` carrega o hash *gravado nele*, não o hash atual
+/// — decidir se os dois batem é responsabilidade de quem orquestra a
+/// resolução (`crate::cli`), não do carregamento do workspace em si.
+pub fn current_manifest_hash(root: &Path) -> Result<String, WorkspaceLoadError> {
+    let manifest_path = root.join("project.toml");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|source| WorkspaceLoadError::Io {
+            path: manifest_path,
+            source,
+        })?;
+    Ok(compute_manifest_hash([manifest_contents.as_str()]))
+}

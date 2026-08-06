@@ -1,12 +1,15 @@
 pub mod bom;
 pub mod cache;
+pub mod cli;
 pub mod domain;
 pub mod download;
 pub mod exclusion;
 pub mod graph;
 pub mod lockfile;
 pub mod manifest;
+pub mod maven;
 pub mod mediation;
 pub mod pom;
+pub mod resolve;
 pub mod version;
 pub mod workspace;

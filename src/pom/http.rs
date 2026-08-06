@@ -1,11 +1,12 @@
 use super::error::PomParseError;
 use super::{parse_pom_xml, ParsedPom, PomProvider};
+use crate::maven::{artifact_url, MavenLayoutError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum HttpPomError {
-    #[error("invalid coordinate `{0}` — expected `groupId:artifactId`")]
-    InvalidCoordinate(String),
+    #[error(transparent)]
+    InvalidCoordinate(#[from] MavenLayoutError),
 
     #[error("HTTP request for POM at `{url}` failed: {source}")]
     Request {
@@ -47,16 +48,7 @@ impl HttpPomProvider {
     }
 
     fn pom_url(&self, coordinate: &str, version: &str) -> Result<String, HttpPomError> {
-        let (group_id, artifact_id) = coordinate
-            .split_once(':')
-            .filter(|(g, a)| !g.is_empty() && !a.is_empty())
-            .ok_or_else(|| HttpPomError::InvalidCoordinate(coordinate.to_string()))?;
-
-        Ok(format!(
-            "{}/{}/{artifact_id}/{version}/{artifact_id}-{version}.pom",
-            self.base_url.trim_end_matches('/'),
-            group_id.replace('.', "/"),
-        ))
+        Ok(artifact_url(&self.base_url, coordinate, version, "pom")?)
     }
 }
 

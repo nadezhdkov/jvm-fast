@@ -16,6 +16,9 @@ pub enum DownloadError {
     #[error("could not build HTTP client: {0}")]
     ClientBuild(#[source] reqwest::Error),
 
+    #[error("checksum sidecar at `{url}` was empty or unreadable")]
+    EmptyChecksum { url: String },
+
     #[error(transparent)]
     Cache(#[from] crate::cache::CacheError),
 }

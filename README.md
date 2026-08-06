@@ -88,6 +88,9 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/workspace` | `load_workspace` — primeiro construtor real de `Workspace` | Implementado — ainda não decide sozinho se o lock está válido |
 | `src/cache` | Cache de artefatos content-addressable + índice SQLite (seção 5) | Implementado, ligado ao download |
 | `src/download` | Download paralelo de artefatos via `reqwest`/`tokio` (seção 6.2 passo 6) | Implementado — primeiro código `async` do projeto |
+| `src/maven` | Layout de path Maven (`group/artifact/version/...`) compartilhado entre `pom::http` e `download` | Implementado |
+| `src/resolve` | Orquestra BOMs → exclusions → grafo → mediação (seção 6.2, passos 3–5) | Implementado |
+| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`tree`/`why` (seção 9) | Implementado — Fase 1 completa |
 
 ---
 
@@ -120,6 +123,16 @@ cargo build
 cargo test
 ```
 
+Com o binário compilado, a Fase 1 já funciona ponta a ponta num projeto
+Java real (resolve, baixa artefatos, escreve `project.lock`):
+
+```bash
+cd /caminho/do/seu/projeto   # com um project.toml (ver Exemplos abaixo)
+cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- install
+```
+
+`build`/`run`/`test` (Fase 3) e `jdk` (Fase 2) ainda não existem.
+
 ---
 
 ## Comandos Cargo
@@ -136,8 +149,8 @@ cargo test
 
 ## Exemplos
 
-Quando os comandos estiverem implementados, o fluxo de trabalho é este
-`project.toml`:
+`project.toml` mínimo (`[dev-dependencies]` é parseado mas ainda não chega
+ao resolvedor — ver gap em `CLAUDE.md`):
 
 ```toml
 [project]
@@ -149,17 +162,22 @@ java-version = "21"
 "com.fasterxml.jackson.core:jackson-databind" = "2.17.0"
 "org.slf4j:slf4j-api" = "2.0.13"
 
-[dev-dependencies]
-"org.junit.jupiter:junit-jupiter" = "5.10.2"
+[repositories]
+default = "https://repo1.maven.org/maven2"
 
 [run]
 main-class = "com.exemplo.Main"
 ```
 
 ```bash
-jvmfast install   # resolve e baixa dependências
-jvmfast run       # compila e executa
-jvmfast test      # roda testes via JUnit Platform Console
+jvmfast install                                    # resolve e baixa dependências, gera project.lock
+jvmfast add "com.fasterxml.jackson.core:jackson-databind@2.17.0"
+jvmfast remove "org.slf4j:slf4j-api"
+jvmfast update                                      # re-resolve ignorando o lock existente
+jvmfast tree                                        # árvore de dependências resolvida
+jvmfast why "com.fasterxml.jackson.core:jackson-core"
+jvmfast run                                         # ainda não implementado (Fase 3)
+jvmfast test                                        # ainda não implementado (Fase 3)
 ```
 
 ---
@@ -193,7 +211,8 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — lockfile read/write + manifest-hash (seção 4) — primeiro `Workspace` real
 - [x] Marco — cache content-addressable + índice SQLite (seção 5)
 - [x] Marco — download paralelo via reqwest/tokio + `HttpPomProvider` (seção 6.2)
-- [ ] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
+- [x] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
+- [x] **Fase 1 completa** — resolução e cache, ponta a ponta
 - [ ] Fase 2 — gerenciamento de JDK
 - [ ] Fase 3 — build e execução
 - [ ] Fase 4 — interoperabilidade (`import-pom`, `import-gradle`)

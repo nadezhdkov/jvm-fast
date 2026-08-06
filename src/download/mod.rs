@@ -83,6 +83,24 @@ impl DownloadClient {
         Err(last_error.expect("the loop above runs at least once, since attempts >= 1"))
     }
 
+    /// Busca o checksum publicado pelo repositório para um artefato ainda
+    /// não presente no lockfile (seção 6.2 passo 7: "SHA-256... comparado
+    /// contra o valor do lockfile, **ou do repositório, se o lock está
+    /// sendo gerado agora**") — repositórios Maven publicam um sidecar
+    /// `<artefato>.sha256` de texto simples ao lado de cada artefato.
+    /// Alguns publicam só o hash, outros `<hash>  <filename>`; qualquer um
+    /// dos dois formatos tem o hash como primeiro token.
+    pub async fn fetch_checksum(&self, artifact_url: &str) -> Result<String, DownloadError> {
+        let sidecar_url = format!("{artifact_url}.sha256");
+        let contents = self.fetch_bytes(&sidecar_url).await?;
+        let text = String::from_utf8_lossy(&contents);
+        text.split_whitespace()
+            .next()
+            .map(str::to_lowercase)
+            .filter(|hash| !hash.is_empty())
+            .ok_or(DownloadError::EmptyChecksum { url: sidecar_url })
+    }
+
     /// Baixa um único artefato e o persiste no cache — `CacheStore::write_artifact`
     /// já cobre a verificação de checksum e o rename atômico (seção 5.1);
     /// este método só cuida da parte de rede.

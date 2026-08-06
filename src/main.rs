@@ -1,13 +1,7 @@
 use clap::Parser;
+use jvmfast::cli::{run, Cli};
 
-#[derive(Parser)]
-#[command(
-    name = "jvmfast",
-    version,
-    about = "jvm-fast: gerenciador de dependências e build para Java"
-)]
-struct Cli {}
-
-fn main() {
-    let _cli = Cli::parse();
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    run(Cli::parse()).await
 }

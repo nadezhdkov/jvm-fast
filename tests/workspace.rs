@@ -1,5 +1,5 @@
 use jvmfast::lockfile::compute_manifest_hash;
-use jvmfast::workspace::load_workspace;
+use jvmfast::workspace::{current_manifest_hash, load_workspace};
 use std::path::PathBuf;
 
 fn temp_project_dir(name: &str) -> PathBuf {
@@ -51,6 +51,23 @@ fn load_workspace_loads_existing_lockfile_from_disk() {
     // decidir se está válido é responsabilidade de `is_lockfile_valid`, não
     // de `load_workspace`.
     assert_eq!(workspace.lockfile.manifest_hash, "sha256:stale");
+    assert_ne!(
+        current_manifest_hash(&dir).expect("should compute"),
+        workspace.lockfile.manifest_hash
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn current_manifest_hash_matches_a_freshly_loaded_workspace_without_lockfile() {
+    let dir = temp_project_dir("current-hash");
+    std::fs::write(dir.join("project.toml"), MINIMAL_MANIFEST).unwrap();
+
+    let workspace = load_workspace(&dir).expect("should load");
+    let hash = current_manifest_hash(&dir).expect("should compute");
+
+    assert_eq!(hash, workspace.lockfile.manifest_hash);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

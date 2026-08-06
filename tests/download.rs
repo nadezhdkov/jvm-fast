@@ -133,6 +133,37 @@ async fn download_many_downloads_and_caches_every_artifact() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn fetch_checksum_reads_first_token_of_sha256_sidecar() {
+    let server = start_mock_server(|path| {
+        if path == "/demo-1.0.0.jar.sha256" {
+            (200, b"ABCDEF0123  demo-1.0.0.jar\n".to_vec())
+        } else {
+            (404, Vec::new())
+        }
+    });
+
+    let client = DownloadClient::new(&NetworkConfig::default()).expect("should build client");
+    let checksum = client
+        .fetch_checksum(&format!("{}/demo-1.0.0.jar", server.base_url))
+        .await
+        .expect("should fetch checksum");
+
+    assert_eq!(checksum, "abcdef0123");
+}
+
+#[tokio::test]
+async fn fetch_checksum_rejects_empty_sidecar_body() {
+    let server = start_mock_server(|_path| (200, Vec::new()));
+
+    let client = DownloadClient::new(&NetworkConfig::default()).expect("should build client");
+    let result = client
+        .fetch_checksum(&format!("{}/demo-1.0.0.jar", server.base_url))
+        .await;
+
+    assert!(matches!(result, Err(DownloadError::EmptyChecksum { .. })));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn download_many_caps_concurrency_at_configured_limit() {
     let current = Arc::new(AtomicUsize::new(0));
