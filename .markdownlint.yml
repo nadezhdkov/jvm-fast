@@ -10,3 +10,4 @@ MD032: false # listas coladas ao parágrafo anterior sem linha em branco — est
 MD060: false # estilo de espaçamento em pipes de tabela — as tabelas já usam "| a | b |" espaçado de forma consistente; a regra pede o oposto ("a|b")
 MD024:
   siblings_only: true # permite headings repetidos em seções diferentes (ex. "Instalação")
+MD041: false # exige heading H1 na primeira linha — README usa bloco de badges centralizado antes do título, convenção deliberada
