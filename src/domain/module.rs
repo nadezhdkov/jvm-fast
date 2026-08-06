@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 /// Declara o que um módulo precisa (`project.toml`) — nunca guarda estado
 /// resolvido. Ver docs/architecture.md seção 3.1.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub name: String,
     pub root: PathBuf,
@@ -11,16 +12,19 @@ pub struct Module {
     pub exclusions: HashMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dependency {
     pub coordinate: String,
     pub version_req: VersionReq,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionReq {
     Explicit(String),
     BomManaged,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BomReference {
     pub coordinate: String,
     pub version: String,

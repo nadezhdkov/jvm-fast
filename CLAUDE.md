@@ -80,18 +80,38 @@ requests for the identical version from different modules still go through
 as conflict-free. Version comparison reuses `version::SemVer` numerically
 when both sides parse — verified against the classic "2.9.0" vs "2.10.0"
 lexicographic trap — falling back to plain string comparison, deterministic
-but not "correct," for non-semver Maven versions).
+but not "correct," for non-semver Maven versions); lockfile (`src/lockfile/`:
+`compute_manifest_hash` — SHA-256 over the workspace's aggregated
+`project.toml` contents (seção 6.2 passo 2) — `is_lockfile_valid`,
+`build_lockfile` converts a mediated `DependencyGraph` into `Lockfile`
+(`sha256`/`resolved_from` are caller-supplied, since real artifact download
+doesn't exist yet — a missing checksum is a typed `MissingChecksum` error,
+never a fabricated value), and `read_lockfile`/`write_lockfile` — `Lockfile`/
+`LockedPackage`/`LockedRequest` (`src/domain/lockfile.rs`) now derive
+`Serialize`/`Deserialize` with the seção 4 kebab-case field names; `Module`
+also picked up `Debug`/`Clone`/`PartialEq` in this pass); first real
+`Workspace` constructor (`src/workspace/load_workspace`: parses the root
+`project.toml`, loads `project.lock` if present or defaults to an honestly
+empty `Lockfile` with the freshly computed hash — never a fabricated
+"resolved" state — and builds `WorkspaceConfig` from the seção 3.5
+documented defaults, including `concurrent_downloads` via
+`std::thread::available_parallelism()`, no `num_cpus` crate needed. Doesn't
+decide lock validity itself — that's still `lockfile::is_lockfile_valid`,
+called by whoever orchestrates resolution next).
 
 Next milestones, in order (each independently pickable in a future session):
-lockfile read/write + manifest-hash (seção 4, first real `Workspace`
-constructor, first consumer of `mediation::mediate`'s output) →
 content-addressable cache + SQLite index (seção 5) → parallel download via
 reqwest/tokio (first `async` code in the codebase, also where `build_graph`
-gets a real HTTP-backed `PomProvider`) → CLI command wiring for
-`install`/`add`/`remove`/`update`/`tree`/`why` → credentials/auth (seção
-3.2) → global `config.toml` loading (seção 3.5) → resolving `^`/`~` ranges
-against real repository metadata (fills the `UnresolvedVersionRange` gap
-above).
+gets a real HTTP-backed `PomProvider`, and where `build_lockfile`'s
+`checksums`/`resolved_from` finally get real values instead of
+caller-supplied fixtures) → CLI command wiring for
+`install`/`add`/`remove`/`update`/`tree`/`why` (first orchestrator calling
+`workspace::load_workspace` → `lockfile::is_lockfile_valid` →
+`graph::build_graph` → `mediation::mediate` → `lockfile::build_lockfile` end
+to end) → credentials/auth (seção 3.2) → global `config.toml` loading
+(seção 3.5, overrides `WorkspaceConfig::default()`) → resolving `^`/`~`
+ranges against real repository metadata (fills the `UnresolvedVersionRange`
+gap above).
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

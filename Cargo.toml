@@ -20,3 +20,4 @@ serde = { version = "1", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 thiserror = "1"
 quick-xml = "0.41.0"
+sha2 = "0.11.0"

@@ -76,14 +76,16 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 
 | Componente | Responsabilidade | Status |
 |---|---|---|
-| `src/domain` | Modelo de domínio da arquitetura (seção 3.1): `Module`, `Workspace`, `DependencyGraph`, `Lockfile` | `Workspace`/`Lockfile` declarados, ainda sem construtor; `DependencyGraph`/`ResolvedNode` já construídos de verdade pela mediação |
+| `src/domain` | Modelo de domínio da arquitetura (seção 3.1): `Module`, `Workspace`, `DependencyGraph`, `Lockfile` | Todos os tipos construídos de verdade — `Workspace`/`Lockfile` pelo marco de lockfile, `DependencyGraph`/`ResolvedNode` pela mediação |
 | `src/manifest` | Parsing de `project.toml` em `Module`, com erros tipados | Implementado |
 | `src/version` | Version ranges (`^`/`~`/exato) e exclusão de pré-release (seção 6.1) | Implementado, usado pela mediação para comparar versões |
 | `src/bom` | Tabela `coordenada → versão` a partir de BOMs declarados (seção 3.3) | Implementado, ligado ao grafo |
 | `src/exclusion` | Filtro de transitivas excluídas (seção 3.4), agregado por workspace | Implementado, ligado ao grafo |
 | `src/pom` | Parser real de `pom.xml` (`quick-xml`) + `PomProvider` compartilhado | Implementado — sem interpolação de propriedade nem herança de `<parent>` |
 | `src/graph` | Constrói o grafo de candidatos do workspace (seção 6.2, passo 4) | Implementado, ligado à mediação |
-| `src/mediation` | Decide o vencedor de cada conflito (seção 6.2, passo 5) — produz `DependencyGraph`/`ResolvedNode` | Implementado — ainda não ligado a lockfile/CLI |
+| `src/mediation` | Decide o vencedor de cada conflito (seção 6.2, passo 5) — produz `DependencyGraph`/`ResolvedNode` | Implementado, ligado ao lockfile |
+| `src/lockfile` | Hash de manifesto, `DependencyGraph` → `Lockfile`, leitura/escrita de `project.lock` (seção 4) | Implementado — `sha256`/`resolved-from` ainda vêm de fora, sem download real |
+| `src/workspace` | `load_workspace` — primeiro construtor real de `Workspace` | Implementado — ainda não decide sozinho se o lock está válido |
 
 ---
 
@@ -186,7 +188,7 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — exclusions (seção 3.4)
 - [x] Marco — grafo de transitivas + fetch real de POM (`quick-xml`)
 - [x] Marco — mediação de conflitos (seção 6.2) — `DependencyGraph`/`ResolvedNode` reais
-- [ ] Marco — lockfile read/write (seção 4)
+- [x] Marco — lockfile read/write + manifest-hash (seção 4) — primeiro `Workspace` real
 - [ ] Marco — cache + download paralelo (seção 5, 6.2)
 - [ ] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
 - [ ] Fase 2 — gerenciamento de JDK
