@@ -8,6 +8,7 @@ pub struct NodeId(pub u64);
 
 /// Topologia pura do grafo de resolução — quem trouxe o quê. Ver
 /// docs/architecture.md seção 3.1.
+#[derive(Debug, PartialEq, Eq)]
 pub struct DependencyGraph {
     pub nodes: HashMap<NodeId, ResolvedNode>,
     pub edges: Vec<GraphEdge>,
@@ -28,6 +29,7 @@ pub enum EdgeKind {
 }
 
 /// Estado de resolução de um artefato no grafo — sem noção de topologia.
+#[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedNode {
     pub id: NodeId,
     pub coordinate: String,
@@ -43,6 +45,7 @@ pub struct VersionRequest {
     pub depth: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediationReason {
     NearestDepthWins { rejected: Vec<String> },
     HigherVersionWins { rejected: Vec<String> },

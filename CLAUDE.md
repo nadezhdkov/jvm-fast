@@ -68,13 +68,23 @@ resolving `VersionReq::BomManaged` against the BOM table — produces a
 *not* the doc's `ResolvedNode`/`DependencyGraph`, since those require
 `selected`/`mediation_reason` that only mediation, the next milestone, can
 honestly produce; a `^`/`~` range reaching a dependency here is a typed
-`GraphError::UnresolvedVersionRange`, not silently treated as literal).
+`GraphError::UnresolvedVersionRange`, not silently treated as literal);
+mediation (`src/mediation/`: `mediate` consumes a `graph::CandidateGraph`
+and produces the real `domain::DependencyGraph`/`ResolvedNode` — the first
+time those types are actually constructed, not just declared. Fixed
+precedence `depth ASC → version DESC → deterministic tie-break`, matching
+the seção 13.1 test table including diamond dependency and depth-wins-over-
+higher-version end to end. Each `VersionRequest` is its own candidate — two
+requests for the identical version from different modules still go through
+`DeterministicTieBreak`, per seção 13.1's own category naming, not treated
+as conflict-free. Version comparison reuses `version::SemVer` numerically
+when both sides parse — verified against the classic "2.9.0" vs "2.10.0"
+lexicographic trap — falling back to plain string comparison, deterministic
+but not "correct," for non-semver Maven versions).
 
 Next milestones, in order (each independently pickable in a future session):
-mediation algorithm (seção 6.2 passo 5, tested against the seção 13.1 table
-— consumes `graph::CandidateGraph` and produces the real
-`domain::DependencyGraph`/`ResolvedNode`) → lockfile read/write +
-manifest-hash (seção 4, first real `Workspace` constructor) →
+lockfile read/write + manifest-hash (seção 4, first real `Workspace`
+constructor, first consumer of `mediation::mediate`'s output) →
 content-addressable cache + SQLite index (seção 5) → parallel download via
 reqwest/tokio (first `async` code in the codebase, also where `build_graph`
 gets a real HTTP-backed `PomProvider`) → CLI command wiring for
