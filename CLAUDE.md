@@ -51,12 +51,17 @@ BOM resolution (`src/bom/`: `resolve_boms` builds the `coordinate → version`
 table per seção 3.3 — first-BOM-wins, first-entry-wins, transitive import
 with the depth-10 limit — behind a `PomProvider` trait so the table-building
 logic is testable with in-memory fixture POMs; no real POM fetching wired in
-yet, and not yet wired into manifest/resolver either).
+yet, and not yet wired into manifest/resolver either); exclusions
+(`src/exclusion/`: `merge_exclusions` combines `Module.exclusions` across
+`&[Module]` into one `coordinate → excluded-set` table, `is_excluded` checks
+a parent/candidate edge against it per seção 3.4 — no wildcard support, by
+design; not yet wired into graph construction, since that doesn't exist).
 
 Next milestones, in order (each independently pickable in a future session):
-exclusions (seção 3.4) → transitive graph construction + real POM fetching
-(first concrete `PomProvider`, using `quick-xml`) → mediation algorithm
-(seção 6.2, tested against the seção 13.1 table) → lockfile read/write +
+transitive graph construction + real POM fetching (first concrete
+`PomProvider`, using `quick-xml`, wiring in both `bom::resolve_boms` and
+`exclusion::is_excluded`) → mediation algorithm (seção 6.2, tested against
+the seção 13.1 table) → lockfile read/write +
 manifest-hash (seção 4, first real `Workspace` constructor) →
 content-addressable cache + SQLite index
 (seção 5) → parallel download via reqwest/tokio (first `async` code in the

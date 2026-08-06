@@ -7,9 +7,6 @@
   <!-- <img src="https://img.shields.io/github/v/release/nadezhdkov/jvm-fast?style=for-the-badge" alt="Release"/> -->
 </p>
 
-[![rust](https://github.com/nadezhdkov/jvm-fast/actions/workflows/rust.yml/badge.svg)](https://github.com/nadezhdkov/jvm-fast/actions/workflows/rust.yml)
-[![docs](https://github.com/nadezhdkov/jvm-fast/actions/workflows/docs.yml/badge.svg)](https://github.com/nadezhdkov/jvm-fast/actions/workflows/docs.yml)
-
 # jvm-fast
 
 **Um "uv para Java" — CLI nativo em Rust para dependências, JDK e build de projetos Java single-module, sem setup.**
@@ -83,6 +80,7 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/manifest` | Parsing de `project.toml` em `Module`, com erros tipados | Implementado |
 | `src/version` | Version ranges (`^`/`~`/exato) e exclusão de pré-release (seção 6.1) | Implementado — ainda não ligado ao resolvedor |
 | `src/bom` | Tabela `coordenada → versão` a partir de BOMs declarados (seção 3.3) | Implementado — ainda não ligado ao resolvedor |
+| `src/exclusion` | Filtro de transitivas excluídas (seção 3.4), agregado por workspace | Implementado — ainda não ligado à construção do grafo |
 
 ---
 
@@ -182,7 +180,7 @@ para detalhes; estado detalhado dos marcos em
 - [x] Bootstrap do projeto Rust — modelo de domínio + parsing de `project.toml`
 - [x] Marco — version ranges `^`/`~` (seção 6.1)
 - [x] Marco — resolução de BOMs (seção 3.3)
-- [ ] Marco — exclusions (seção 3.4)
+- [x] Marco — exclusions (seção 3.4)
 - [ ] Marco — grafo de transitivas + fetch de POM
 - [ ] Marco — mediação de conflitos (seção 6.2)
 - [ ] Marco — lockfile read/write (seção 4)
