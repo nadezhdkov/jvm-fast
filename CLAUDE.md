@@ -97,12 +97,27 @@ empty `Lockfile` with the freshly computed hash — never a fabricated
 documented defaults, including `concurrent_downloads` via
 `std::thread::available_parallelism()`, no `num_cpus` crate needed. Doesn't
 decide lock validity itself — that's still `lockfile::is_lockfile_valid`,
-called by whoever orchestrates resolution next).
+called by whoever orchestrates resolution next); content-addressable cache +
+SQLite index (`src/cache/`: `CacheStore::write_artifact` — temp file in the
+final shard directory → verify SHA-256 → atomic rename per seção 5.1, skips
+the write entirely if the hash-derived path already exists, since identical
+content at an identical path can never be a corruption risk — a mismatched
+checksum is a typed `ChecksumMismatch` error, never a partially-written file
+left behind; `CacheStore::artifact_path` builds the seção 5 two-level
+`sha256/aa/bb/<hash>/<filename>` shard path; `open_index`/`record_artifact`/
+`find_artifact`/`list_cached_versions` wrap a `rusqlite` (bundled SQLite,
+no system dependency) `index.db` with an `artifacts(coordinate, version,
+sha256, filename)` table, `INSERT ... ON CONFLICT DO UPDATE` so concurrent
+writers never race on existence-checks. No real download exists yet, so
+nothing calls this module end-to-end — it's exercised only by tests writing
+in-memory byte slices; wiring it to actual HTTP responses is the next
+milestone).
 
 Next milestones, in order (each independently pickable in a future session):
-content-addressable cache + SQLite index (seção 5) → parallel download via
-reqwest/tokio (first `async` code in the codebase, also where `build_graph`
-gets a real HTTP-backed `PomProvider`, and where `build_lockfile`'s
+parallel download via reqwest/tokio (first `async` code in the codebase,
+also where `build_graph` gets a real HTTP-backed `PomProvider`, where
+`cache::CacheStore`/`cache::record_artifact` get real artifact bytes to
+write instead of test fixtures, and where `build_lockfile`'s
 `checksums`/`resolved_from` finally get real values instead of
 caller-supplied fixtures) → CLI command wiring for
 `install`/`add`/`remove`/`update`/`tree`/`why` (first orchestrator calling

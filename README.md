@@ -86,6 +86,7 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/mediation` | Decide o vencedor de cada conflito (seção 6.2, passo 5) — produz `DependencyGraph`/`ResolvedNode` | Implementado, ligado ao lockfile |
 | `src/lockfile` | Hash de manifesto, `DependencyGraph` → `Lockfile`, leitura/escrita de `project.lock` (seção 4) | Implementado — `sha256`/`resolved-from` ainda vêm de fora, sem download real |
 | `src/workspace` | `load_workspace` — primeiro construtor real de `Workspace` | Implementado — ainda não decide sozinho se o lock está válido |
+| `src/cache` | Cache de artefatos content-addressable + índice SQLite (seção 5) | Implementado — escrita atômica testada com bytes em memória, sem download real ainda |
 
 ---
 
@@ -189,7 +190,8 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — grafo de transitivas + fetch real de POM (`quick-xml`)
 - [x] Marco — mediação de conflitos (seção 6.2) — `DependencyGraph`/`ResolvedNode` reais
 - [x] Marco — lockfile read/write + manifest-hash (seção 4) — primeiro `Workspace` real
-- [ ] Marco — cache + download paralelo (seção 5, 6.2)
+- [x] Marco — cache content-addressable + índice SQLite (seção 5)
+- [ ] Marco — download paralelo via reqwest/tokio (seção 6.2)
 - [ ] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
 - [ ] Fase 2 — gerenciamento de JDK
 - [ ] Fase 3 — build e execução

@@ -1,4 +1,5 @@
 pub mod bom;
+pub mod cache;
 pub mod domain;
 pub mod exclusion;
 pub mod graph;
