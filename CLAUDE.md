@@ -97,8 +97,8 @@ JDKs, and global `config.toml` beyond `[defaults]`), Fase 3 (see below),
 and Fase 4 (multi-project Gradle builds, `java-version` extraction from
 Gradle, and `import-pom`'s parent-POM-inheritance gap) — each is a typed,
 rejected-not-faked error or a documented report note today, not silent
-scope creep. **Fase 5 (workspace e multi-módulo, seção 12) is well
-underway**: `[workspace].members` in the root `project.toml` is real —
+scope creep. **Fase 5 (workspace e multi-módulo, seção 12) is nearly
+complete**: `[workspace].members` in the root `project.toml` is real —
 `workspace::load_workspace` loads every declared member as a genuine
 `Module` from its own `<member>/project.toml` — and a module can now
 declare `[workspace-dependencies]` on another module in the same
@@ -108,10 +108,16 @@ correct topological compile ordering (`build::module_order`) and an
 inter-module classpath (a dependency's `target/classes` reaches its
 dependent's `javac -cp`) — verified end to end compiling one module's
 source against a class only another module defines, with real `javac`.
-Incremental build, and giving member modules their own
+`jvmfast test` was reconciled to scope its own compile classpath the same
+explicit, `workspace_dependencies`-based way instead of its old cruder
+implicit accumulation. Build is now incremental at module granularity too
+(`build::fingerprint`, content-hash-based, correctly propagating
+invalidation transitively through workspace dependencies) — `jvmfast
+build`/`run`/`test` all skip recompiling a module whose inputs haven't
+changed. Only giving member modules their own
 `[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` instead of
-only the root's, are still open — see the Fase 5 writeup below for
-exactly what's done versus what's left.
+only the root's remains open — see the Fase 5 writeup below for exactly
+what's done versus what's left.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -801,12 +807,45 @@ ordering/incremental build don't exist yet**:
   has an "api" module's test class that calls a class only "core" defines,
   reachable only via `[workspace-dependencies].core = true` — it compiles
   and the real JUnit run passes.
-- **No incremental build.** Content-hash-based skip-if-unchanged per
-  module (seção 12's "build incremental... reaproveitando o mesmo
-  mecanismo de content-addressable storage da seção 5, agora aplicado a
-  outputs de compilação") isn't implemented — `build`/`run` already
-  recompile from scratch every call even in single-module (a pre-existing
-  Fase 3 gap), and Fase 5 doesn't change that yet.
+- **Incremental build — implemented, at module granularity.** New
+  `src/build/fingerprint.rs`: `compute_module_fingerprint` hashes (SHA-256,
+  every file listing sorted first — filesystem iteration order isn't
+  guaranteed) a module's source file *contents* (not timestamps, which lie
+  across git checkouts/CI), its resource file contents, its full classpath
+  (external + workspace-dependency `target/classes` paths), the `javac`
+  binary path itself (so `jvmfast jdk use` switching JDKs invalidates
+  correctly), and — for transitive invalidation — every declared
+  `workspace_dependencies` entry's *own* fingerprint (not its file
+  contents again; `build::build` already computed dependencies'
+  fingerprints first, in topological order, so this reuses that instead of
+  re-hashing). `build::build` compares this against
+  `target/classes/.jvmfast-build-fingerprint` (written atomically —
+  temp file → rename, same discipline as `cache::CacheStore` — and only
+  ever *after* a successful compile+copy, never before, so an
+  interrupted/failed build can't leave a false "up to date" marker behind)
+  and skips `compile`/`copy_resources` entirely when they match
+  (`ModuleBuildSummary.up_to_date = true`, `compiled_files`/
+  `copied_resources` both `0` — an honest "nothing ran this time", not "the
+  module has nothing"). Any uncertainty (`target/classes` missing, no
+  stored fingerprint, unreadable fingerprint file) forces a rebuild — same
+  "cache is never a source of truth, corruption is resolved by rebuilding"
+  principle as `src/cache` itself. `jvmfast run`/`jvmfast test` inherit
+  this for free (both call `crate::build::build` internally) — their old
+  doc comments claiming "always recompiles, no incremental build in v1"
+  are now updated to reflect that module-level skip applies, though
+  *file*-level incremental compilation within a module that does need
+  rebuilding still doesn't exist (same pre-existing Fase 3 gap, narrower
+  in scope now, not the same claim). `cli::build`'s summary text changed
+  from "N module(s) built" to "N module(s) rebuilt, M up to date" to
+  surface this honestly. Tested thoroughly given the correctness stakes of
+  a caching feature (`tests/build.rs`): a second identical build skips; a
+  changed source or resource file triggers a rebuild; a manually deleted
+  `target/classes` is treated as never-built; and — the case that would be
+  easiest to get subtly wrong — a workspace dependency ("core") changing
+  correctly invalidates its *dependent* ("api") even though `api`'s own
+  files never changed, alongside a mirror test proving both stay up to
+  date when truly nothing changed (so the transitive-invalidation test
+  isn't just "always rebuilds everything" in disguise).
 - **`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` stay
   root-manifest-only.** `jvmfast run`/`test` and `cli::context::resolve_base_url`
   still only ever read `root.join("project.toml")` — a non-root member
@@ -958,9 +997,14 @@ shortcuts):
   (`testing::CONSOLE_VERSION = "1.14.4"`) — no way to override it from
   `project.toml`/CLI flag yet; not documented as configurable by seção 8.1
   either, so not clearly in-scope to add.
-- `build`/`run` recompile from scratch every call — no incremental
-  compilation (source-hash/timestamp skip), matching seção 8's explicit
-  "not mandatory in v1" scope note.
+- `build`/`run`/`test` skip recompiling a whole module when its content
+  fingerprint hasn't changed (`build::fingerprint`, added in Fase 5, seção
+  12 — see that writeup) — but *within* a module that does need
+  rebuilding, there's still no finer-grained incremental compilation
+  (per-file source-hash skip, so `javac` always recompiles every source in
+  a changed module, never just the files that actually changed inside
+  it). Narrower gap than before Fase 5, not the same claim as "recompiles
+  from scratch every call" used to be.
 - `[project].source-encoding` (seção 3, parsed by
   `manifest::dto::ProjectSection` since Fase 1) isn't passed to `javac`
   yet (no `-encoding` flag) — `build` doesn't read it at all currently.
@@ -1075,12 +1119,15 @@ with real `javac` (see the Fase 5 writeup above) — and `jvmfast test`
 (`testing::run_tests`) now agrees with `build` on what "sees another
 module's classes" means (explicit `workspace_dependencies`-scoped
 compile-time classpath, verified against the real JUnit Console Launcher)
-instead of its own older, cruder, implicit accumulation. What's left
-inside Fase 5: incremental build (content-hash skip-if-unchanged), and
+instead of its own older, cruder, implicit accumulation. Build is also
+incremental at module granularity now (`build::fingerprint`,
+content-hash-based, transitive invalidation through workspace
+dependencies verified explicitly in tests) — `build`/`run`/`test` all
+skip a module whose inputs haven't changed. What's left inside Fase 5:
 deciding whether/how member modules get their own
 `[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` instead of
 only the root manifest's (see "Known, deliberate gaps inside Fase 5"
-above for both). Outside Fase 5, the natural next picks
+above). Outside Fase 5, the natural next picks
 are, in no particular priority order: `jvmfast init`
 (seção 9.2 — still the only way to get a `project.toml` onto disk without
 hand-writing one is `import-pom`/`import-gradle`, both of which require an

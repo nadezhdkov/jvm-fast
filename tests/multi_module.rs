@@ -109,7 +109,7 @@ async fn install_and_build_operate_on_every_workspace_module() {
     assert!(lockfile_contents.contains("module = \"core\""));
 
     let build_summary = build_result.expect("build should succeed across both modules");
-    assert!(build_summary.contains("2 module(s) built"));
+    assert!(build_summary.contains("2 module(s) rebuilt, 0 up to date"));
     assert!(project_dir.join("target/classes").is_dir());
     assert!(project_dir.join("core/target/classes").is_dir());
 

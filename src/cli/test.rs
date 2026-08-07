@@ -17,9 +17,11 @@ pub struct TestOptions {
 /// `jvmfast test` (seção 8.1): mesmas checagens de `cli::build`/`cli::run`
 /// (lock presente e válido, JDK do projeto instalada), depois compila
 /// `src/main/java` (o código sob teste precisa de `target/classes`
-/// atualizado — mesmo raciocínio de sempre recompilar de `cli::run`) antes
-/// de delegar a `testing::run_tests` para compilar `src/test/java` e
-/// invocar o JUnit Platform Console Standalone.
+/// atualizado — via `crate::build::build`, mesmo build incremental por
+/// módulo de `cli::run`/`cli::build` desde a Fase 5) antes de delegar a
+/// `testing::run_tests` para compilar `src/test/java` e invocar o JUnit
+/// Platform Console Standalone (`src/test/java` em si não é incremental
+/// ainda — cada `jvmfast test` recompila os testes do zero).
 pub async fn run(root: &Path, options: TestOptions) -> Result<String, CliError> {
     if options.fail_fast {
         return Err(CliError::FailFastNotSupported);

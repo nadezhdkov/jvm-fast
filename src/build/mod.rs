@@ -1,6 +1,7 @@
 mod classpath;
 mod compile;
 mod error;
+mod fingerprint;
 mod order;
 mod resources;
 mod sources;
@@ -23,6 +24,16 @@ pub struct ModuleBuildSummary {
     pub compiled_files: usize,
     pub copied_resources: usize,
     pub classes_dir: PathBuf,
+    /// `true` quando o fingerprint dos insumos de build (fontes, recursos,
+    /// classpath, `javac`, fingerprints das dependências de workspace)
+    /// bate com o do último build bem-sucedido — nesse caso `compile`/
+    /// `copy_resources` nunca rodam de novo, e `compiled_files`/
+    /// `copied_resources` acima são `0` (nada foi de fato recompilado ou
+    /// recopiado nesta chamada, não "o módulo não tem nada"). Seção 12,
+    /// Fase 5: "recompilar só módulos afetados por uma mudança" — no nível
+    /// de módulo inteiro, não arquivo-a-arquivo dentro de um módulo (isso
+    /// continua sendo o gap já documentado desde a Fase 3).
+    pub up_to_date: bool,
 }
 
 /// `jvmfast build` (seção 8): compila `src/main/java` com `javac` e copia
@@ -34,6 +45,18 @@ pub struct ModuleBuildSummary {
 /// módulo soma a ele o `target/classes` de cada nome em
 /// `Module.workspace_dependencies` — já compilado nesse ponto, garantido
 /// pela ordem topológica. `build` nunca re-resolve nem toca rede.
+///
+/// Build incremental por módulo (seção 12, Fase 5): antes de compilar,
+/// calcula um fingerprint de conteúdo (`fingerprint::compute_module_fingerprint`)
+/// dos insumos do módulo e compara contra o gravado no último build
+/// bem-sucedido (`target/classes/.jvmfast-build-fingerprint`) — se
+/// baterem, pula `compile`/`copy_resources` inteiramente
+/// (`ModuleBuildSummary.up_to_date = true`). O fingerprint de cada
+/// dependência de workspace entra no cálculo do fingerprint de quem
+/// depende dela, propagando invalidação transitiva sem precisar re-hashear
+/// o conteúdo da dependência de novo. Qualquer incerteza (fingerprint
+/// ausente/ilegível, `target/classes` ausente) força rebuild — o cache
+/// nunca é tratado como fonte de verdade (mesmo princípio de `src/cache`).
 pub fn build(
     workspace: &Workspace,
     javac: &Path,
@@ -45,11 +68,13 @@ pub fn build(
     let order = order::module_order(&workspace.modules)?;
 
     let mut classes_dirs: HashMap<&str, PathBuf> = HashMap::with_capacity(workspace.modules.len());
+    let mut fingerprints: HashMap<&str, String> = HashMap::with_capacity(workspace.modules.len());
     let mut summaries = Vec::with_capacity(workspace.modules.len());
     for index in order {
         let module = &workspace.modules[index];
         let module_sources = sources::collect_java_sources(&module.root.join("src/main/java"))?;
         let classes_dir = module.root.join("target/classes");
+        let resources_dir = module.root.join("src/main/resources");
 
         let mut classpath = dependency_classpath.clone();
         for dependency_name in &module.workspace_dependencies {
@@ -59,16 +84,40 @@ pub fn build(
             classpath.push(dependency_classes_dir.clone());
         }
 
-        compile::compile(javac, &module_sources, &classpath, &classes_dir)?;
-        let copied_resources =
-            resources::copy_resources(&module.root.join("src/main/resources"), &classes_dir)?;
+        let dependency_fingerprints: Vec<String> = module
+            .workspace_dependencies
+            .iter()
+            .map(|name| fingerprints[name.as_str()].clone())
+            .collect();
+        let module_fingerprint = fingerprint::compute_module_fingerprint(
+            &module_sources,
+            &resources_dir,
+            &classpath,
+            javac,
+            &dependency_fingerprints,
+        )?;
+
+        let up_to_date = classes_dir.is_dir()
+            && fingerprint::read_stored_fingerprint(&classes_dir).as_deref()
+                == Some(module_fingerprint.as_str());
+
+        let (compiled_files, copied_resources) = if up_to_date {
+            (0, 0)
+        } else {
+            compile::compile(javac, &module_sources, &classpath, &classes_dir)?;
+            let copied_resources = resources::copy_resources(&resources_dir, &classes_dir)?;
+            fingerprint::write_fingerprint(&classes_dir, &module_fingerprint)?;
+            (module_sources.len(), copied_resources)
+        };
 
         classes_dirs.insert(module.name.as_str(), classes_dir.clone());
+        fingerprints.insert(module.name.as_str(), module_fingerprint);
         summaries.push(ModuleBuildSummary {
             module: module.name.clone(),
-            compiled_files: module_sources.len(),
+            compiled_files,
             copied_resources,
             classes_dir,
+            up_to_date,
         });
     }
 

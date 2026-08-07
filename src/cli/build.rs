@@ -34,8 +34,10 @@ pub fn run(root: &Path) -> Result<String, CliError> {
 
     let total_compiled: usize = summaries.iter().map(|s| s.compiled_files).sum();
     let total_resources: usize = summaries.iter().map(|s| s.copied_resources).sum();
+    let up_to_date_count = summaries.iter().filter(|s| s.up_to_date).count();
+    let rebuilt_count = summaries.len() - up_to_date_count;
     Ok(format!(
-        "compiled {total_compiled} source file(s), copied {total_resources} resource(s) — {} module(s) built",
-        summaries.len()
+        "compiled {total_compiled} source file(s), copied {total_resources} resource(s) — \
+         {rebuilt_count} module(s) rebuilt, {up_to_date_count} up to date"
     ))
 }

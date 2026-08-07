@@ -9,8 +9,10 @@ use crate::run::run_main_class;
 use crate::workspace::{current_manifest_hash, load_workspace};
 use std::path::Path;
 
-/// `jvmfast run` (seção 8): compila (sempre — v1 não tem build incremental,
-/// mesmo raciocínio já documentado em `cli::build`) e então executa
+/// `jvmfast run` (seção 8): compila (via `crate::build::build`, que desde a
+/// Fase 5 pula módulos cujo fingerprint de conteúdo não mudou — seção 12 —
+/// mas continua sem incremental *dentro* de um módulo que precisa
+/// recompilar, mesmo gap documentado desde a Fase 3) e então executa
 /// `[run].main-class` com `[run].jvm-args`, classpath = `target/classes` de
 /// cada módulo + dependências do `project.lock`. Mesmas checagens de
 /// `cli::build` (lock presente e válido, JDK do projeto instalada) — `run`

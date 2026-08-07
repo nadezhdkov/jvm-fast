@@ -297,3 +297,204 @@ fn module_order_puts_dependencies_before_dependents() {
 
     assert_eq!(order, vec![1, 0]);
 }
+
+#[test]
+fn build_skips_recompilation_when_nothing_changed() {
+    let project_dir = temp_dir("incremental-no-change");
+    let cache_root = temp_dir("incremental-no-change-cache");
+
+    std::fs::create_dir_all(project_dir.join("src/main/java")).unwrap();
+    std::fs::write(
+        project_dir.join("src/main/java/Main.java"),
+        "public class Main {}\n",
+    )
+    .unwrap();
+
+    let workspace = workspace_with_module(project_dir.clone(), empty_lockfile());
+
+    let first = build(&workspace, &system_javac(), &cache_root).expect("should build");
+    assert!(!first[0].up_to_date);
+    assert_eq!(first[0].compiled_files, 1);
+
+    let second = build(&workspace, &system_javac(), &cache_root).expect("should build again");
+    assert!(second[0].up_to_date);
+    assert_eq!(second[0].compiled_files, 0);
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+#[test]
+fn build_recompiles_when_a_source_file_changes() {
+    let project_dir = temp_dir("incremental-source-change");
+    let cache_root = temp_dir("incremental-source-change-cache");
+
+    std::fs::create_dir_all(project_dir.join("src/main/java")).unwrap();
+    let source_path = project_dir.join("src/main/java/Main.java");
+    std::fs::write(&source_path, "public class Main {}\n").unwrap();
+
+    let workspace = workspace_with_module(project_dir.clone(), empty_lockfile());
+    build(&workspace, &system_javac(), &cache_root).expect("should build");
+
+    std::fs::write(&source_path, "public class Main { int x = 1; }\n").unwrap();
+    let second = build(&workspace, &system_javac(), &cache_root).expect("should rebuild");
+
+    assert!(!second[0].up_to_date);
+    assert_eq!(second[0].compiled_files, 1);
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+#[test]
+fn build_recompiles_when_a_resource_file_changes() {
+    let project_dir = temp_dir("incremental-resource-change");
+    let cache_root = temp_dir("incremental-resource-change-cache");
+
+    std::fs::create_dir_all(project_dir.join("src/main/resources")).unwrap();
+    let resource_path = project_dir.join("src/main/resources/app.properties");
+    std::fs::write(&resource_path, "key=1\n").unwrap();
+
+    let workspace = workspace_with_module(project_dir.clone(), empty_lockfile());
+    build(&workspace, &system_javac(), &cache_root).expect("should build");
+
+    std::fs::write(&resource_path, "key=2\n").unwrap();
+    let second = build(&workspace, &system_javac(), &cache_root).expect("should rebuild");
+
+    assert!(!second[0].up_to_date);
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("target/classes/app.properties")).unwrap(),
+        "key=2\n"
+    );
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+#[test]
+fn build_treats_a_missing_target_classes_as_never_built() {
+    let project_dir = temp_dir("incremental-missing-classes");
+    let cache_root = temp_dir("incremental-missing-classes-cache");
+
+    std::fs::create_dir_all(project_dir.join("src/main/java")).unwrap();
+    std::fs::write(
+        project_dir.join("src/main/java/Main.java"),
+        "public class Main {}\n",
+    )
+    .unwrap();
+
+    let workspace = workspace_with_module(project_dir.clone(), empty_lockfile());
+    build(&workspace, &system_javac(), &cache_root).expect("should build");
+
+    std::fs::remove_dir_all(project_dir.join("target/classes")).unwrap();
+    let second = build(&workspace, &system_javac(), &cache_root).expect("should rebuild");
+
+    assert!(!second[0].up_to_date);
+    assert!(project_dir.join("target/classes/Main.class").is_file());
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+/// The transitive-invalidation case: "api" doesn't touch its own files at
+/// all between builds, but "core" (its workspace dependency) does — "api"
+/// must still be recompiled, since a stale reference to `core`'s previous
+/// class shape would be wrong. This is exactly why `module.workspace_dependencies`'
+/// *fingerprints* (not just their file contents) feed into a module's own
+/// fingerprint (`fingerprint::compute_module_fingerprint`).
+#[test]
+fn build_transitively_invalidates_a_dependent_when_its_workspace_dependency_changes() {
+    let root = temp_dir("incremental-transitive");
+    let cache_root = temp_dir("incremental-transitive-cache");
+    let core_dir = root.join("core");
+    let api_dir = root.join("api");
+
+    std::fs::create_dir_all(core_dir.join("src/main/java")).unwrap();
+    let core_source = core_dir.join("src/main/java/Greeter.java");
+    std::fs::write(
+        &core_source,
+        "public class Greeter { public static String hello() { return \"hi\"; } }\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(api_dir.join("src/main/java")).unwrap();
+    std::fs::write(
+        api_dir.join("src/main/java/Api.java"),
+        "public class Api { public static void main(String[] a) { Greeter.hello(); } }\n",
+    )
+    .unwrap();
+
+    let workspace = Workspace {
+        root: root.clone(),
+        modules: vec![
+            module("api", api_dir.clone(), vec!["core".to_string()]),
+            module("core", core_dir.clone(), Vec::new()),
+        ],
+        lockfile: empty_lockfile(),
+        config: WorkspaceConfig::default(),
+    };
+
+    let first = build(&workspace, &system_javac(), &cache_root).expect("should build");
+    assert!(!first[0].up_to_date && !first[1].up_to_date);
+
+    // Nothing under api/ changes — only core's own source.
+    std::fs::write(
+        &core_source,
+        "public class Greeter { public static String hello() { return \"hi there\"; } }\n",
+    )
+    .unwrap();
+
+    let second = build(&workspace, &system_javac(), &cache_root).expect("should rebuild");
+    let core_summary = second.iter().find(|s| s.module == "core").unwrap();
+    let api_summary = second.iter().find(|s| s.module == "api").unwrap();
+    assert!(!core_summary.up_to_date, "core itself changed");
+    assert!(
+        !api_summary.up_to_date,
+        "api must be invalidated transitively even though its own files didn't change"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+/// Mirror case: if *neither* module's inputs changed, both stay up to date
+/// on a second build — proves the transitive-invalidation test above isn't
+/// just "always rebuilds everything" in disguise.
+#[test]
+fn build_keeps_both_modules_up_to_date_when_nothing_changed() {
+    let root = temp_dir("incremental-transitive-stable");
+    let cache_root = temp_dir("incremental-transitive-stable-cache");
+    let core_dir = root.join("core");
+    let api_dir = root.join("api");
+
+    std::fs::create_dir_all(core_dir.join("src/main/java")).unwrap();
+    std::fs::write(
+        core_dir.join("src/main/java/Greeter.java"),
+        "public class Greeter { public static String hello() { return \"hi\"; } }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(api_dir.join("src/main/java")).unwrap();
+    std::fs::write(
+        api_dir.join("src/main/java/Api.java"),
+        "public class Api { public static void main(String[] a) { Greeter.hello(); } }\n",
+    )
+    .unwrap();
+
+    let workspace = Workspace {
+        root: root.clone(),
+        modules: vec![
+            module("api", api_dir, vec!["core".to_string()]),
+            module("core", core_dir, Vec::new()),
+        ],
+        lockfile: empty_lockfile(),
+        config: WorkspaceConfig::default(),
+    };
+
+    build(&workspace, &system_javac(), &cache_root).expect("should build");
+    let second = build(&workspace, &system_javac(), &cache_root).expect("should build again");
+
+    assert!(second.iter().all(|s| s.up_to_date));
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
