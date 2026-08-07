@@ -85,22 +85,14 @@ pub async fn install(root: &Path, force: bool, yes: bool) -> Result<InstallSumma
         .await??
     };
 
-    let (checksums, requests, reused) = plan_downloads(
+    let (checksums, downloaded, reused) = resolve_downloads(
         &resolve_output.graph,
         &base_url,
         &download_client,
-        &cache_store,
+        Arc::clone(&cache_store),
+        max_concurrent,
     )
     .await?;
-    let downloaded = requests.len();
-
-    let results = download_client
-        .download_many(requests, Arc::clone(&cache_store), max_concurrent)
-        .await;
-    let failed = results.iter().filter(|r| r.is_err()).count();
-    if failed > 0 {
-        return Err(CliError::DownloadsFailed(failed, downloaded));
-    }
 
     let lockfile = build_lockfile(
         &resolve_output.graph,
@@ -196,40 +188,51 @@ async fn download_locked_packages(
     Ok((downloaded, reused))
 }
 
-/// Para cada nó do grafo mediado, busca o checksum publicado (sidecar
-/// `.sha256`, seção 6.2 passo 7 — "ou do repositório, se o lock está sendo
-/// gerado agora") e monta a lista de artefatos que de fato precisam ser
-/// baixados (pulando os já presentes no cache local pelo hash).
-async fn plan_downloads(
+/// Para cada nó do grafo mediado, resolve o artefato do zero (seção 6.2
+/// passo 7: checksum publicado pelo repositório, com fallback
+/// `.sha256`→`.sha1` — ver `DownloadClient::fetch_verify_and_cache` — já
+/// que o lock ainda não existe para fornecer um SHA-256 pré-conhecido).
+/// Devolve o SHA-256 *real* de cada pacote (calculado, nunca o valor cru
+/// publicado quando esse valor não era SHA-256) para `build_lockfile`.
+async fn resolve_downloads(
     graph: &DependencyGraph,
     base_url: &str,
     download_client: &DownloadClient,
-    cache_store: &CacheStore,
-) -> Result<(HashMap<String, String>, Vec<ArtifactRequest>, usize), CliError> {
-    let mut checksums = HashMap::new();
-    let mut requests = Vec::new();
-    let mut reused = 0;
-
+    cache_store: Arc<CacheStore>,
+    max_concurrent: usize,
+) -> Result<(HashMap<String, String>, usize, usize), CliError> {
+    let mut items = Vec::with_capacity(graph.nodes.len());
     for node in graph.nodes.values() {
         let jar_url = artifact_url(base_url, &node.coordinate, &node.selected, "jar")?;
-        let checksum = download_client.fetch_checksum(&jar_url).await?;
         let filename = artifact_filename(&node.coordinate, &node.selected, "jar")?;
+        let key = format!("{}@{}", node.coordinate, node.selected);
+        items.push((key, jar_url, filename));
+    }
 
-        checksums.insert(
-            format!("{}@{}", node.coordinate, node.selected),
-            checksum.clone(),
-        );
+    let results = download_client
+        .fetch_verify_and_cache_many(items, cache_store, max_concurrent)
+        .await;
 
-        if cache_store.is_cached(&checksum, &filename) {
-            reused += 1;
-        } else {
-            requests.push(ArtifactRequest {
-                url: jar_url,
-                filename,
-                expected_sha256: checksum,
-            });
+    let mut checksums = HashMap::new();
+    let mut downloaded = 0;
+    let mut reused = 0;
+    let mut failed = 0;
+    for (key, result) in results {
+        match result {
+            Ok(resolved) => {
+                checksums.insert(key, resolved.sha256);
+                if resolved.reused_from_cache {
+                    reused += 1;
+                } else {
+                    downloaded += 1;
+                }
+            }
+            Err(_) => failed += 1,
         }
     }
 
-    Ok((checksums, requests, reused))
+    if failed > 0 {
+        return Err(CliError::DownloadsFailed(failed, downloaded + failed));
+    }
+    Ok((checksums, downloaded, reused))
 }

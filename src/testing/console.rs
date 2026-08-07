@@ -1,7 +1,7 @@
 use super::error::TestError;
 use super::filter::{glob_to_regex, TestFilter};
 use crate::cache::CacheStore;
-use crate::download::{ArtifactRequest, DownloadClient};
+use crate::download::DownloadClient;
 use crate::maven::{artifact_filename, artifact_url};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -26,20 +26,10 @@ pub async fn ensure_console_jar(
 ) -> Result<PathBuf, TestError> {
     let jar_url = artifact_url(base_url, CONSOLE_COORDINATE, CONSOLE_VERSION, "jar")?;
     let filename = artifact_filename(CONSOLE_COORDINATE, CONSOLE_VERSION, "jar")?;
-    let checksum = download_client.fetch_checksum(&jar_url).await?;
-
-    if cache_store.is_cached(&checksum, &filename) {
-        return Ok(cache_store.artifact_path(&checksum, &filename));
-    }
-
-    let request = ArtifactRequest {
-        url: jar_url,
-        filename,
-        expected_sha256: checksum,
-    };
-    Ok(download_client
-        .download_artifact(&request, cache_store)
-        .await?)
+    let resolved = download_client
+        .fetch_verify_and_cache(&jar_url, &filename, cache_store)
+        .await?;
+    Ok(resolved.path)
 }
 
 /// Monta e roda `java -jar <console.jar> execute ...` (seção 8.1) — stdio

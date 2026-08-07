@@ -28,18 +28,21 @@ lockfile-pinned yet) and runs it via the JUnit Platform Console Standalone
 — treated as jvm-fast's own internal dependency, downloaded straight from
 Maven Central and cached like any artifact, never declared in
 `project.toml`. All three verified end to end against a real system JDK
-and (for `test`'s console-launcher download) real Maven Central — see
-"Known, deliberate gaps inside Fase 1" below for two significant
-pre-existing limitations this surfaced (Maven Central checksum sidecar
-format, POM dependency `<scope>` not filtered). Fase 4 (interop)
-is **not started** — `docs/architecture.md` seção 12 and the roadmap below
-are the spec to implement against for it. See "Roadmap" below for the
-specific gaps left inside Fase 1 (targeted `update <coord>`, `add`
-without an explicit version, editing `[dev-dependencies]` from the CLI,
-multi-repository fallback, per-host download throttling, and — newly
-found this session — checksum-sidecar-format and POM-scope-filtering
-gaps that affect real-world Maven Central usage), Fase 2 (exact-version
-JDK install, listing *available* (not just installed) JDKs, and global
+and (for `test`'s console-launcher download) real Maven Central — that
+testing surfaced two significant pre-existing Fase 1 limitations, both
+now addressed: `download::fetch_checksum`'s `.sha256`-only assumption is
+**fixed** (falls back to `.sha1`, which is what most real Maven Central
+artifacts actually publish — see "Known, deliberate gaps inside Fase 1"
+below for the full writeup), and `graph::build_graph` not filtering POM
+dependencies by `<scope>` is **also fixed** (test/provided/system-scoped
+transitives no longer leak into the graph as if compile-scoped — same
+section below). Fase 4 (interop) is **not started** —
+`docs/architecture.md` seção 12 and the roadmap below are the spec to
+implement against for it. See "Roadmap" below for the specific gaps left
+inside Fase 1 (targeted `update <coord>`, `add` without an explicit
+version, editing `[dev-dependencies]` from the CLI, multi-repository
+fallback, per-host download throttling), Fase 2 (exact-version JDK
+install, listing *available* (not just installed) JDKs, and global
 `config.toml` beyond `[defaults]`), and Fase 3 (see below) — each is a
 typed, rejected-not-faked error today, not silent scope creep.
 
@@ -316,21 +319,35 @@ shortcuts):
   now (`manifest::parse_dev_module`, Fase 3/`jvmfast test`), so this gap
   is narrower than it used to be: it's specifically about `add`/`remove`
   never touching `[dev-dependencies]`, not about dev-deps being unusable.
-- **[Descoberto nesta sessão, ao testar `jvmfast test` contra Maven
-  Central real pela primeira vez neste projeto — afeta `install`/`add`
-  igualmente, não é específico de Fase 3]** `download::fetch_checksum`
-  assumes every artifact publishes a `<file>.sha256` sidecar. Real Maven
-  Central is inconsistent about this: some artifacts do (the JUnit
-  Platform Console Standalone jar `jvmfast test` depends on, luckily), but
-  many common ones don't and publish `.sha1`/`.md5` instead (confirmed by
-  hand against `slf4j-api`, `guava`, `hamcrest` — all 404 on `.sha256`).
-  This means `jvmfast install`/`add`/`jvmfast test`'s dev-dependency
-  resolution can fail against real, common dependencies whenever no
-  lockfile checksum exists yet to skip this fetch — not a hypothetical
-  edge case, a real-world blocker. Not fixed here (would mean supporting
-  `.sha1`/`.md5` verification too, a Fase 1 change, out of scope for
-  finishing Fase 3); flagged prominently rather than silently left for
-  someone to rediscover.
+- ~~`download::fetch_checksum` assumes every artifact publishes a
+  `.sha256` sidecar~~ **Fixed.** Discovered this session testing
+  `jvmfast test` against real Maven Central for the first time in this
+  project (affected `install`/`add` equally, not Fase-3-specific): real
+  Maven Central is inconsistent about `.sha256` — some artifacts publish
+  it (the JUnit Console Standalone jar, luckily), many common ones don't
+  and only publish `.sha1` (confirmed by hand against `slf4j-api`,
+  `guava`, `hamcrest` — all 404 on `.sha256`, all 200 on `.sha1`).
+  `DownloadClient::fetch_checksum` now returns a `PublishedChecksum`
+  (`Sha256`/`Sha1`) and falls back from `.sha256` to `.sha1` on a 404;
+  `DownloadClient::fetch_verify_and_cache`/`fetch_verify_and_cache_many`
+  (new — replace the old `fetch_checksum`-then-build-`ArtifactRequest`
+  pattern in `cli::install::resolve_downloads`,
+  `testing::devdeps::resolve_dev_classpath`,
+  `testing::console::ensure_console_jar`) verify against whichever
+  algorithm was published, then compute and cache under the artifact's
+  **real SHA-256** regardless (the cache/lockfile identity is always
+  SHA-256, seção 5 — the published checksum is only ever used for
+  download-integrity verification, never stored as-is). `ArtifactRequest`/
+  `download_artifact`/`download_many` are unchanged and still used as
+  before for `download_locked_packages` (an existing `project.lock`
+  always already has the confirmed real SHA-256, no fallback needed
+  there). One accepted, documented trade-off: artifacts with no
+  `.sha256` sidecar lose the "skip download, already cached" fast path
+  on the *first* resolve (the cache is indexed by SHA-256, unknown until
+  after downloading+hashing when only `.sha1` is published) — but never
+  again after that, since the real SHA-256 is what lands in
+  `project.lock`. Verified against real Maven Central (`slf4j-api`
+  installs and locks cleanly now, was a hard failure before).
 - **[Same session, same discovery path]** `pom::xml` parses `<scope>` but
   `graph::build_graph` never filters on it — a dependency's `test`/
   `provided`/`system`-scoped children are treated as ordinary transitive

@@ -19,6 +19,16 @@ pub enum DownloadError {
     #[error("checksum sidecar at `{url}` was empty or unreadable")]
     EmptyChecksum { url: String },
 
+    #[error(
+        "{algorithm} checksum mismatch downloading `{url}`: expected {expected}, got {actual}"
+    )]
+    ChecksumMismatch {
+        url: String,
+        algorithm: &'static str,
+        expected: String,
+        actual: String,
+    },
+
     #[error(transparent)]
     Cache(#[from] crate::cache::CacheError),
 }

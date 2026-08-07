@@ -1,7 +1,7 @@
 use super::error::TestError;
 use crate::cache::CacheStore;
 use crate::domain::Module;
-use crate::download::{ArtifactRequest, DownloadClient};
+use crate::download::DownloadClient;
 use crate::maven::{artifact_filename, artifact_url};
 use crate::pom::HttpPomProvider;
 use crate::resolve::resolve;
@@ -36,31 +36,21 @@ pub async fn resolve_dev_classpath(
     })
     .await??;
 
-    let mut cached_paths = Vec::new();
-    let mut requests = Vec::new();
+    let mut items = Vec::with_capacity(resolve_output.graph.nodes.len());
     for node in resolve_output.graph.nodes.values() {
         let jar_url = artifact_url(base_url, &node.coordinate, &node.selected, "jar")?;
-        let checksum = download_client.fetch_checksum(&jar_url).await?;
         let filename = artifact_filename(&node.coordinate, &node.selected, "jar")?;
-
-        if cache_store.is_cached(&checksum, &filename) {
-            cached_paths.push(cache_store.artifact_path(&checksum, &filename));
-        } else {
-            requests.push(ArtifactRequest {
-                url: jar_url,
-                filename,
-                expected_sha256: checksum,
-            });
-        }
+        let key = format!("{}@{}", node.coordinate, node.selected);
+        items.push((key, jar_url, filename));
     }
 
     let results = download_client
-        .download_many(requests, Arc::clone(&cache_store), max_concurrent)
+        .fetch_verify_and_cache_many(items, Arc::clone(&cache_store), max_concurrent)
         .await;
 
-    let mut classpath = cached_paths;
-    for result in results {
-        classpath.push(result?);
+    let mut classpath = Vec::with_capacity(results.len());
+    for (_key, result) in results {
+        classpath.push(result?.path);
     }
     Ok(classpath)
 }
