@@ -22,6 +22,7 @@ pub struct ProjectManifest {
     #[serde(default)]
     pub repositories: HashMap<String, String>,
     pub run: Option<RunSection>,
+    pub workspace: Option<WorkspaceSection>,
 }
 
 #[derive(Deserialize)]
@@ -36,6 +37,19 @@ pub struct ProjectSection {
 
 fn default_encoding() -> String {
     "UTF-8".to_string()
+}
+
+/// `[workspace]` (seção 12, Fase 5) — opcional; sua ausência inteira
+/// significa "não é um workspace multi-módulo", não um erro. `members`
+/// lista subdiretórios (relativos à raiz do workspace) que também têm seu
+/// próprio `project.toml` completo — o `project.toml` raiz continua sendo
+/// um módulo em si mesmo (`[project]` é obrigatório em todo manifesto,
+/// inclusive o raiz), então um workspace de N módulos declara `[workspace]`
+/// só no manifesto raiz, nunca nos dos membros.
+#[derive(Deserialize)]
+pub struct WorkspaceSection {
+    #[serde(default)]
+    pub members: Vec<String>,
 }
 
 #[derive(Deserialize)]

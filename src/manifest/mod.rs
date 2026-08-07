@@ -62,6 +62,19 @@ pub struct RunConfig {
     pub jvm_args: Vec<String>,
 }
 
+/// `[workspace].members` (seção 12, Fase 5) — nomes de subdiretórios que
+/// também são módulos, cada um com seu próprio `project.toml` completo.
+/// Ausência de `[workspace]` inteiro (o caso comum, projeto single-module)
+/// devolve uma lista vazia, não um erro — nem todo projeto é um workspace.
+/// Só o manifesto raiz é lido para isso; `workspace::load_workspace` é quem
+/// decide, a partir do resultado, quais outros manifestos carregar.
+pub fn parse_workspace_members(path: &Path) -> Result<Vec<String>, ManifestError> {
+    Ok(parse_manifest(path)?
+        .workspace
+        .map(|section| section.members)
+        .unwrap_or_default())
+}
+
 pub fn parse_run_config(path: &Path) -> Result<RunConfig, ManifestError> {
     let run = parse_manifest(path)?.run;
     Ok(match run {

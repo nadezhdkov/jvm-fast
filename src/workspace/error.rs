@@ -12,4 +12,8 @@ pub enum WorkspaceLoadError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "duplicate module name `{0}` — module names (root + [workspace].members) must be unique across the workspace"
+    )]
+    DuplicateModuleName(String),
 }

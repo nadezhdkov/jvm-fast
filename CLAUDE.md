@@ -97,7 +97,16 @@ JDKs, and global `config.toml` beyond `[defaults]`), Fase 3 (see below),
 and Fase 4 (multi-project Gradle builds, `java-version` extraction from
 Gradle, and `import-pom`'s parent-POM-inheritance gap) — each is a typed,
 rejected-not-faked error or a documented report note today, not silent
-scope creep.
+scope creep. **Fase 5 (workspace e multi-módulo, seção 12) has started**:
+`[workspace].members` in the root `project.toml` is now real —
+`workspace::load_workspace` loads every declared member as a genuine
+`Module` from its own `<member>/project.toml`, and `install`/`build`
+already resolve/compile all of them correctly with zero changes to
+`resolve`/`graph`/`mediation`/`lockfile`/`build`/`testing` themselves
+(they were already written to operate on `Workspace.modules: Vec<Module>`,
+never a lone module, since Fase 1). Cross-module dependencies, build
+ordering, and incremental build are still unimplemented — see the Fase 5
+writeup below for exactly what's done versus open.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -661,6 +670,108 @@ both implemented end to end**:
   wiring layer (explicit `project` path, defaulted path, already-exists
   rejection) the same way `tests/cli_import.rs` does for `import-pom`.
 
+**Fase 5 (workspace e multi-módulo, seção 12) — foundation started: real
+multi-module loading works end to end, cross-module dependencies/build
+ordering/incremental build don't exist yet**:
+
+- `src/manifest/dto.rs` — `ProjectManifest` gained an optional `workspace:
+  Option<WorkspaceSection>` field (`WorkspaceSection { members: Vec<String>
+  }`, from `[workspace].members`). Absence of the whole `[workspace]` table
+  — the common, pre-Fase-5 case — was already silently ignored by serde
+  before this change (`ProjectManifest` has no `deny_unknown_fields`), so
+  adding the field is purely additive; every existing single-module
+  `project.toml` keeps parsing exactly as before.
+- `manifest::parse_workspace_members(path)` — new, same precedent as
+  `parse_repositories`/`parse_java_version` (reads the manifest
+  independently rather than extending `parse_module`, since `Module`
+  itself has no workspace concept — seção 3.1 still doesn't model
+  workspace membership on the domain type, only `Workspace.modules: Vec<Module>`
+  does). Returns an empty `Vec` when `[workspace]` is absent, not an error.
+- `workspace::load_workspace` — no longer hardcodes `modules: vec![module]`.
+  A new private `collect_manifest_entries(root)` reads the root manifest,
+  asks it for `[workspace].members`, then reads each
+  `<root>/<member>/project.toml` in declared order, returning
+  `Vec<(PathBuf, String)>` (path + raw contents) for root-then-members —
+  both `load_workspace` (parses each into a real `Module`) and
+  `current_manifest_hash` (feeds every manifest's contents into
+  `lockfile::compute_manifest_hash`, which was already generic over
+  multiple manifests — designed for exactly this since Fase 1, per its own
+  doc comment — but only ever called with one until now) share it, so the
+  two can never drift out of sync on ordering (`compute_manifest_hash` is
+  order-sensitive). A member manifest that doesn't exist on disk becomes a
+  typed `WorkspaceLoadError::Io` naturally (no separate existence check
+  needed); two modules (root or members) sharing the same `[project].name`
+  become `WorkspaceLoadError::DuplicateModuleName` — real diagnostics
+  (`VersionRequest.origin_module`, `LockedRequest.module`, `jvmfast why`)
+  are keyed by module name, so a silent collision would corrupt them.
+- **Nothing else needed to change** for `jvmfast install`/`build` to start
+  operating on real multi-module workspaces — this is the payoff of the
+  Fase 1-4 "operate on `&[Module]`/`workspace.modules`, never index `[0]`"
+  discipline documented as binding since before Fase 5 existed.
+  `resolve::resolve`, `graph::build_graph`, `mediation::mediate`,
+  `lockfile::build_lockfile`, `build::build`, and `testing::run_tests` all
+  already iterated every module correctly and needed zero code changes —
+  proven by `tests/multi_module.rs`'s end-to-end test (`jvmfast install`
+  resolves and downloads a distinct dependency declared by each of two
+  real modules loaded from disk into one shared `project.lock`, with
+  correct per-module `[[request]].module` provenance; `jvmfast build`
+  compiles both into their own independent `target/classes` trees) against
+  a real mock HTTP server, not a synthetic in-memory `Workspace`.
+- Tests: `tests/workspace.rs` gained multi-module coverage
+  (root+members loading, aggregate manifest hashing in order,
+  backward-compat single-module behavior unchanged, duplicate-name
+  rejection, missing-member-manifest rejection) alongside the pre-existing
+  single-module tests, none of which needed to change.
+
+**Known, deliberate gaps inside Fase 5 so far** (this is genuinely just
+the foundation — most of seção 12's Fase 5 scope remains open):
+
+- **No cross-module dependencies.** There is still no way for one
+  workspace module to declare "depend on sibling module X" in
+  `[dependencies]` — `Dependency`/`DependencyValue` only model an explicit
+  version string or BOM-managed (`true`); a coordinate matching another
+  module's name would just be looked up as an ordinary Maven coordinate
+  against `PomProvider` and fail (or, worse, silently resolve against a
+  same-named artifact on Maven Central). `EdgeKind::WorkspaceModule`
+  still exists in the domain model but nothing constructs it anywhere in
+  `src/` — `graph::build_graph` never recognizes "this coordinate is
+  actually a sibling module." This is the next natural Fase 5 slice.
+  Until it exists, a multi-module workspace is really N independent
+  modules sharing one resolution pass and one lockfile, not modules that
+  can depend on each other.
+- **No topological build ordering.** `build::build`/`testing::run_tests`
+  iterate `workspace.modules` in whatever order `[workspace].members`
+  declared them — since cross-module dependencies don't exist yet (above),
+  there's no ordering to violate today, but this needs to land together
+  with (or before) cross-module dependency support, not after.
+- **No inter-module classpath.** Every module currently compiles against
+  the exact same flat classpath (`build::classpath::locked_classpath`,
+  built once from the shared `project.lock`) — a module's compiled
+  `target/classes` is never added to another module's classpath, since
+  there's no declared dependency between them yet to justify it.
+- **No incremental build.** Content-hash-based skip-if-unchanged per
+  module (seção 12's "build incremental... reaproveitando o mesmo
+  mecanismo de content-addressable storage da seção 5, agora aplicado a
+  outputs de compilação") isn't implemented — `build`/`run` already
+  recompile from scratch every call even in single-module (a pre-existing
+  Fase 3 gap), and Fase 5 doesn't change that yet.
+- **`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` stay
+  root-manifest-only.** `jvmfast run`/`test` and `cli::context::resolve_base_url`
+  still only ever read `root.join("project.toml")` — a non-root member
+  module declaring its own `[run].main-class` or `[dev-dependencies]` is
+  silently unused; `jvmfast run`/`test` have no `--module` selector to
+  point at one. Whether member modules should even be allowed to declare
+  those tables (vs. only the root can) is an open design question, not
+  decided here — this pass only needed root+member modules to resolve/
+  build correctly, not to be independently runnable/testable.
+- **No per-module diagnostics surface change.** `jvmfast why`/`jvmfast tree`
+  already handled N modules correctly before this pass (`module_roots:
+  HashMap<String, NodeId>`, proven by the pre-existing
+  `tests/graph_construction.rs` multi-module test) — this pass didn't need
+  to touch them, but they've also not been exercised end to end against a
+  real multi-module `project.toml` on disk the way `tests/multi_module.rs`
+  now does for `install`/`build`; worth a follow-up test, not a known bug.
+
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
 
@@ -898,26 +1009,40 @@ since Fase 1) remains a real limitation for POMs that lean on it (e.g.
 `com.google.guava:guava`'s own `<dependencyManagement>`-managed `jsr305`
 dependency, and `import-pom`'s own parent-inheritance gap above) — worth
 calling out as a candidate for a future pick, though not promised or
-started here. With all four Fases now implemented (each with its own
-documented, typed gaps rather than silent scope creep), the natural next
-picks are, in no particular priority order: `jvmfast init` (seção 9.2 —
-still the only way to get a `project.toml` onto disk without hand-writing
-one is `import-pom`/`import-gradle`, both of which require an existing
-Maven/Gradle project to import *from*); credentials/auth (seção 3.2);
-global `config.toml` loading beyond `[defaults]` (seção 3.5, overlaying
-the full documented precedence chain onto `WorkspaceConfig::default()`);
-extending `JvmfastDependencyModel` to carry Gradle's configured Java
-version (closing `import-gradle`'s `java-version` gap above); or any of
-the other Fase 1/Fase 2/Fase 3/Fase 4 gaps listed above, each
-independently pickable.
+started here. **Fase 5 (workspace e multi-módulo) has now started too**:
+`workspace::load_workspace` really loads N modules from
+`[workspace].members` and every downstream consumer (`install`, `build`,
+`test`, resolution, mediation, the lockfile) already operates on them
+correctly with zero core changes — proof that the Fase 1-4 "operate on
+`&[Module]`, never index `[0]`" discipline paid off exactly as promised.
+The much bigger remaining slice of Fase 5 — cross-module dependencies
+(`EdgeKind::WorkspaceModule` is still dead code), topological build
+ordering, inter-module classpaths, and incremental build — is *not*
+started (see "Known, deliberate gaps inside Fase 5" above); cross-module
+dependencies specifically is the natural next pick within Fase 5, since
+nothing else in that list is meaningful without it. Outside Fase 5, the
+natural next picks are, in no particular priority order: `jvmfast init`
+(seção 9.2 — still the only way to get a `project.toml` onto disk without
+hand-writing one is `import-pom`/`import-gradle`, both of which require an
+existing Maven/Gradle project to import *from*); credentials/auth (seção
+3.2); global `config.toml` loading beyond `[defaults]` (seção 3.5,
+overlaying the full documented precedence chain onto
+`WorkspaceConfig::default()`); extending `JvmfastDependencyModel` to carry
+Gradle's configured Java version (closing `import-gradle`'s `java-version`
+gap above); or any of the other Fase 1/Fase 2/Fase 3/Fase 4 gaps listed
+above, each independently pickable.
 
-**Multi-módulo (Fase 5) compatibility rules** — already binding, not just
-future work: resolution must always operate on `Workspace.modules: Vec<Module>`,
-never a lone `Module`; `VersionRequest.origin_module` and
-`LockedRequest.module` must always be populated, even with only one possible
-value today; `GraphEdge`/`ResolvedNode` must never be merged into one struct;
-`EdgeKind::WorkspaceModule` stays declared even while unreachable in
-single-module; CLI code must iterate `workspace.modules`, never index `[0]`.
+**Multi-módulo (Fase 5) compatibility rules** — binding since before Fase 5
+started, and now proven in practice by real multi-module loading (see the
+Fase 5 writeup above): resolution must always operate on
+`Workspace.modules: Vec<Module>`, never a lone `Module`;
+`VersionRequest.origin_module` and `LockedRequest.module` must always be
+populated, even with only one possible value in a single-module workspace;
+`GraphEdge`/`ResolvedNode` must never be merged into one struct;
+`EdgeKind::WorkspaceModule` stays declared even while still unconstructed
+anywhere in `src/` (cross-module dependencies aren't implemented yet — see
+the Fase 5 gaps above); CLI code must iterate `workspace.modules`, never
+index `[0]`.
 
 ## Core architectural model (from docs/architecture.md)
 
