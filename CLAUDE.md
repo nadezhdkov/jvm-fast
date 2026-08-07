@@ -15,25 +15,33 @@ version` (including the `"lts"` alias) is now resolved and auto-installed
 (with interactive confirmation unless `--yes`) as part of `jvmfast
 install`/`update`, and the concrete resolved version is persisted in
 `project.lock` (`Lockfile.java_version`) so the alias doesn't silently
-re-resolve on every build. **Fase 3 (build/run/test, seção 8) is in
-progress**: `jvmfast build` compiles `src/main/java` with `javac` from the
+re-resolve on every build. **Fase 3 (build/run/test, seção 8/8.1) is
+complete**: `jvmfast build` compiles `src/main/java` with `javac` from the
 project's resolved JDK and copies `src/main/resources` into
-`target/classes`, end to end against a real (system) JDK in tests — it
-requires a valid `project.lock` and never resolves/downloads/installs
-anything itself (typed errors point at `install`/`jdk install` instead).
-`jvmfast run` builds on top of it: always recompiles (no incremental build
-yet), then executes `[run].main-class`/`jvm-args` via the project's
-resolved `java`, with a classpath of `target/classes` + the locked
-dependencies, stdio inherited so the program's own output goes straight to
-the terminal. `test` is not started yet. Fase 4 (interop) is **not started** —
-`docs/architecture.md` seção 12 and the roadmap below are the spec to
-implement against for those. See "Roadmap" below for the specific gaps
-left inside Fase 1 (targeted `update <coord>`, `add` without an explicit
-version, dev-dependencies, multi-repository fallback, per-host download
-throttling), Fase 2 (exact-version JDK install, listing *available* (not
-just installed) JDKs, and global `config.toml` beyond `[defaults]`), and
-Fase 3 (see below) — each is a typed, rejected-not-faked error today, not
-silent scope creep.
+`target/classes`, requiring a valid `project.lock` and never
+resolving/downloading/installing anything itself (typed errors point at
+`install`/`jdk install` instead); `jvmfast run` builds on top of it
+(always recompiles, executes `[run].main-class`/`jvm-args`, stdio
+inherited); `jvmfast test` compiles `src/test/java` against
+`target/classes` + `[dev-dependencies]` (resolved fresh every run, not
+lockfile-pinned yet) and runs it via the JUnit Platform Console Standalone
+— treated as jvm-fast's own internal dependency, downloaded straight from
+Maven Central and cached like any artifact, never declared in
+`project.toml`. All three verified end to end against a real system JDK
+and (for `test`'s console-launcher download) real Maven Central — see
+"Known, deliberate gaps inside Fase 1" below for two significant
+pre-existing limitations this surfaced (Maven Central checksum sidecar
+format, POM dependency `<scope>` not filtered). Fase 4 (interop)
+is **not started** — `docs/architecture.md` seção 12 and the roadmap below
+are the spec to implement against for it. See "Roadmap" below for the
+specific gaps left inside Fase 1 (targeted `update <coord>`, `add`
+without an explicit version, editing `[dev-dependencies]` from the CLI,
+multi-repository fallback, per-host download throttling, and — newly
+found this session — checksum-sidecar-format and POM-scope-filtering
+gaps that affect real-world Maven Central usage), Fase 2 (exact-version
+JDK install, listing *available* (not just installed) JDKs, and global
+`config.toml` beyond `[defaults]`), and Fase 3 (see below) — each is a
+typed, rejected-not-faked error today, not silent scope creep.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -176,7 +184,7 @@ silent scope creep.
   concrete major version selected at resolution time, never the `"lts"`
   alias itself); `lockfile::build_lockfile` takes it as a parameter.
 
-**Fase 3 (build/run/test, seção 8) — in progress**:
+**Fase 3 (build/run/test, seção 8/8.1) — complete**:
 
 - `src/build/` — `build::build(workspace, javac, cache_root)` (seção 8):
   iterates `workspace.modules` (never indexes `[0]`, per the Fase 5
@@ -237,6 +245,64 @@ silent scope creep.
   outcome, not just its own logic.
 - Tested the same way as `build`: `tests/run.rs`/`tests/cli_run.rs` spawn
   the real system `java`, not a mock.
+- `src/testing/` (seção 8.1) — `testing::run_tests(...)` orchestrates
+  `jvmfast test`: `devdeps::resolve_dev_classpath` resolves and downloads
+  `[dev-dependencies]` through the exact same `resolve()`/`DownloadClient`
+  pipeline `cli::install` uses for production deps, but against a
+  synthetic `Module` (`manifest::parse_dev_module` /
+  `convert::to_dev_module`, named `"<project>-test"`, reusing the
+  project's `[boms]`/`[exclusions]`) and *never* cached in `project.lock`
+  — a deliberate gap, see below. `console::ensure_console_jar` treats
+  JUnit Platform Console Standalone (`org.junit.platform:junit-platform-
+  console-standalone`, version pinned in `console::CONSOLE_VERSION`) as
+  jvm-fast's own internal dependency exactly as seção 8.1 specifies:
+  fetched from Maven Central directly (`cli::context::MAVEN_CENTRAL`,
+  deliberately *not* the project's own `[repositories].default` — it's a
+  jvm-fast tool, not a project dependency) and cached like any other
+  artifact, never appearing in `project.toml`. `console::run` invokes
+  `java -jar <console.jar> execute --classpath <all> --scan-classpath
+  <target/test-classes> ...` with stdio inherited (same discipline as
+  `run::run_main_class`) — the exact CLI flags were verified by hand
+  against the real 1.14.4 jar (`java -jar ... execute --help` plus actual
+  passing/failing/tagged test runs), not assumed from documentation the
+  way the Adoptium/Maven-layout integrations had to be.
+- `src/testing/filter.rs` translates seção 8.1's jvm-fast-specific
+  `--filter` vocabulary (`"tag:fast"` → `--include-tag fast`; anything
+  else, e.g. `"*.UserTest"`, treated as a class-name glob →
+  `--include-classname` with `*` translated to `.*` and every other regex
+  metacharacter escaped, anchored with `^`/`$`) into the Console
+  Launcher's real flags — `glob_to_regex`/`parse_filter` are `pub` and
+  unit-tested directly (`tests/testing.rs`) since this project never uses
+  inline `#[cfg(test)]` modules.
+- `src/cli/test.rs` — wires `jvmfast test --filter <spec> [--report-xml]`:
+  same `project.lock`/JDK checks as `build`/`run`, recompiles
+  `src/main/java` first (test code compiles against `target/classes`),
+  then delegates to `testing::run_tests`. `--fail-fast` is rejected
+  (`CliError::FailFastNotSupported`) rather than silently ignored — the
+  Console Launcher has no native stop-on-first-failure flag to map it to
+  (confirmed against the real `--help` output, not assumed). A non-zero
+  Console Launcher exit becomes `CliError::TestsFailed(code)`, distinct
+  from `build`'s `CompileFailed`/`run`'s `ProgramExited` (partial progress
+  on seção 11's "distinct exit code per failure kind", still not wired to
+  the process's actual OS exit code — see existing gap).
+- `src/build/` gained three more `pub` re-exports (`compile`,
+  `copy_resources`, `collect_java_sources`) so `src/testing/` can reuse
+  them for `src/test/java`/`src/test/resources` instead of duplicating
+  compile/copy logic — same functions `jvmfast build` already used for
+  `src/main/*`, just pointed at different directories.
+- `src/manifest/convert.rs` — `to_module`/`to_dev_module` now share
+  `convert_dependencies`/`convert_boms`/`convert_exclusions` helpers
+  (extracted, not duplicated, once a second caller needed the same
+  coordinate-validation loops).
+- Tested against real Maven Central for the console-jar download
+  specifically (`tests/cli_test.rs` — alongside `build`/`run`'s real-JDK
+  dependency, this is the only other deliberate, narrow exception in this
+  repo to "tests never touch real network"; the *project's own*
+  `[repositories].default` in these tests still points at real Maven
+  Central too, but only because the fixtures declare zero dependencies,
+  so `install` never actually fetches anything from it — dev-dependency
+  resolution itself is exercised by the same mock-server-backed pattern
+  `cli::install` already uses, not duplicated here).
 
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
@@ -245,8 +311,36 @@ shortcuts):
   needs repository metadata (`maven-metadata.xml`) lookup, not built yet;
   rejected via `CliError::VersionOmittedNotSupported`.
 - `jvmfast add --dev` is rejected (`CliError::DevDependenciesNotSupported`)
-  — `[dev-dependencies]` parses in `ProjectManifest` but was never threaded
-  into `Module` (no field for it, by the seção 3.1 struct as documented).
+  — editing `[dev-dependencies]` from the CLI isn't implemented. Resolving
+  dev-deps already declared directly in `project.toml` *is* implemented
+  now (`manifest::parse_dev_module`, Fase 3/`jvmfast test`), so this gap
+  is narrower than it used to be: it's specifically about `add`/`remove`
+  never touching `[dev-dependencies]`, not about dev-deps being unusable.
+- **[Descoberto nesta sessão, ao testar `jvmfast test` contra Maven
+  Central real pela primeira vez neste projeto — afeta `install`/`add`
+  igualmente, não é específico de Fase 3]** `download::fetch_checksum`
+  assumes every artifact publishes a `<file>.sha256` sidecar. Real Maven
+  Central is inconsistent about this: some artifacts do (the JUnit
+  Platform Console Standalone jar `jvmfast test` depends on, luckily), but
+  many common ones don't and publish `.sha1`/`.md5` instead (confirmed by
+  hand against `slf4j-api`, `guava`, `hamcrest` — all 404 on `.sha256`).
+  This means `jvmfast install`/`add`/`jvmfast test`'s dev-dependency
+  resolution can fail against real, common dependencies whenever no
+  lockfile checksum exists yet to skip this fetch — not a hypothetical
+  edge case, a real-world blocker. Not fixed here (would mean supporting
+  `.sha1`/`.md5` verification too, a Fase 1 change, out of scope for
+  finishing Fase 3); flagged prominently rather than silently left for
+  someone to rediscover.
+- **[Same session, same discovery path]** `pom::xml` parses `<scope>` but
+  `graph::build_graph` never filters on it — a dependency's `test`/
+  `provided`/`system`-scoped children are treated as ordinary transitive
+  dependencies instead of being excluded from propagation (real Maven
+  semantics: only `compile`/`runtime` scope propagates transitively).
+  Surfaced by trying `org.assertj:assertj-core` as a real
+  `[dev-dependencies]` entry, which pulled in a test-scoped `hamcrest-core`
+  dependency with an unresolved `${hamcrestVersion}` property (the
+  existing "no property interpolation" gap, seção 3.3 area, compounding
+  it). Also not fixed here — same reasoning as the checksum gap above.
 - `jvmfast update <coord>` (targeted update) is rejected
   (`CliError::TargetedUpdateNotSupported`) — only a full re-resolution
   (`jvmfast update`, no coordinate) is implemented.
@@ -299,9 +393,21 @@ shortcuts):
 
 **Known, deliberate gaps inside Fase 3 so far**:
 
-- `jvmfast test` doesn't exist yet — `src/test/java`,
-  `[dev-dependencies]` on a test-only classpath, and JUnit Platform
-  Console Standalone integration (seção 8.1) are next.
+- `[dev-dependencies]` resolved by `jvmfast test` are never persisted in
+  `project.lock` — resolved and downloaded fresh on every `test` run,
+  unlike production dependencies. `Lockfile` (seção 4) has no schema slot
+  for a second resolved graph; adding one is a bigger, separate design
+  task (same category of gap as the `"lts"` alias needed one in Fase 2).
+- `jvmfast test --fail-fast` is rejected
+  (`CliError::FailFastNotSupported`) — the JUnit Platform Console Launcher
+  has no native stop-on-first-failure flag (confirmed against the real
+  `--help` output of 1.14.4), so there's no faithful way to implement what
+  seção 8.1 documents without either a fork-per-test-class hack or
+  upstream JUnit support that doesn't exist; rejected rather than faked.
+- JUnit Platform Console Standalone version is hardcoded
+  (`testing::CONSOLE_VERSION = "1.14.4"`) — no way to override it from
+  `project.toml`/CLI flag yet; not documented as configurable by seção 8.1
+  either, so not clearly in-scope to add.
 - `build`/`run` recompile from scratch every call — no incremental
   compilation (source-hash/timestamp skip), matching seção 8's explicit
   "not mandatory in v1" scope note.
@@ -329,13 +435,16 @@ shortcuts):
   `jvmfast` indefinitely; acceptable for a local dev tool in v1, not
   flagged as a problem to fix without a concrete need.
 
-Next milestones, in order — rest of **Fase 3** (seção 8.1): `jvmfast test`
-(`src/test/java` + `[dev-dependencies]` on a test-only classpath, JUnit
-Platform Console Standalone as an internal dependency,
-`--filter`/`--fail-fast`/`--report-xml`) → credentials/auth (seção 3.2) →
-global `config.toml` loading (seção 3.5, overrides
-`WorkspaceConfig::default()`) → the Fase 1/Fase 2/Fase 3 gaps listed
-above, each independently pickable.
+Next milestones, in order — **Fase 3 is now complete** (build/run/test all
+implemented). The two gaps discovered this session in real-world Maven
+Central usage (checksum sidecar format, POM `<scope>` filtering) are
+arguably higher priority than starting Fase 4, since they block
+`jvmfast install`/`add`/`test` against a meaningful slice of real
+dependencies today — but Fase 4 (interop, seção 10: `import-pom`/
+`import-gradle`) is the next *phase* per the roadmap. Also pending:
+credentials/auth (seção 3.2) → global `config.toml` loading (seção 3.5,
+overrides `WorkspaceConfig::default()`) → the rest of the Fase 1/Fase
+2/Fase 3 gaps listed above, each independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

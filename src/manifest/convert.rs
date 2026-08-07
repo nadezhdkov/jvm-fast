@@ -5,8 +5,44 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub fn to_module(manifest: ProjectManifest, root: PathBuf) -> Result<Module, ManifestError> {
+    Ok(Module {
+        name: manifest.project.name,
+        root,
+        declared_dependencies: convert_dependencies(manifest.dependencies)?,
+        boms: convert_boms(manifest.boms)?,
+        exclusions: convert_exclusions(manifest.exclusions)?,
+    })
+}
+
+/// `[dev-dependencies]` (seção 3) como um `Module` sintético separado —
+/// nunca mesclado com o `Module` de produção, já que dev-deps só entram no
+/// classpath de `jvmfast test` (seção 8.1), nunca em `build`/`run`.
+/// Reaproveita os mesmos `[boms]`/`[exclusions]` do manifesto (são
+/// configuração do projeto como um todo, não específicas de
+/// `[dependencies]`). `None` quando `[dev-dependencies]` está vazio, para
+/// `jvmfast test` pular resolução inteiramente — nunca um `Module` vazio
+/// fabricado só para preencher o tipo.
+pub fn to_dev_module(
+    manifest: ProjectManifest,
+    root: PathBuf,
+) -> Result<Option<Module>, ManifestError> {
+    if manifest.dev_dependencies.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Module {
+        name: format!("{}-test", manifest.project.name),
+        root,
+        declared_dependencies: convert_dependencies(manifest.dev_dependencies)?,
+        boms: convert_boms(manifest.boms)?,
+        exclusions: convert_exclusions(manifest.exclusions)?,
+    }))
+}
+
+fn convert_dependencies(
+    dependencies: HashMap<String, DependencyValue>,
+) -> Result<Vec<Dependency>, ManifestError> {
     let mut declared_dependencies = Vec::new();
-    for (coordinate, value) in manifest.dependencies {
+    for (coordinate, value) in dependencies {
         validate_coordinate(&coordinate)?;
         let version_req = match value {
             DependencyValue::Explicit(v) => VersionReq::Explicit(v),
@@ -17,32 +53,33 @@ pub fn to_module(manifest: ProjectManifest, root: PathBuf) -> Result<Module, Man
             version_req,
         });
     }
+    Ok(declared_dependencies)
+}
 
-    let mut boms = Vec::new();
-    for (coordinate, version) in manifest.boms {
+fn convert_boms(boms: HashMap<String, String>) -> Result<Vec<BomReference>, ManifestError> {
+    let mut result = Vec::new();
+    for (coordinate, version) in boms {
         validate_coordinate(&coordinate)?;
-        boms.push(BomReference {
+        result.push(BomReference {
             coordinate,
             version,
         });
     }
+    Ok(result)
+}
 
-    let mut exclusions: HashMap<String, Vec<String>> = HashMap::new();
-    for (owner_coordinate, excluded) in manifest.exclusions {
+fn convert_exclusions(
+    exclusions: HashMap<String, Vec<String>>,
+) -> Result<HashMap<String, Vec<String>>, ManifestError> {
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    for (owner_coordinate, excluded) in exclusions {
         validate_coordinate(&owner_coordinate)?;
         for excl in &excluded {
             validate_coordinate(excl)?;
         }
-        exclusions.insert(owner_coordinate, excluded);
+        result.insert(owner_coordinate, excluded);
     }
-
-    Ok(Module {
-        name: manifest.project.name,
-        root,
-        declared_dependencies,
-        boms,
-        exclusions,
-    })
+    Ok(result)
 }
 
 /// Regra mínima que a arquitetura de fato especifica (seção 9.3): formato

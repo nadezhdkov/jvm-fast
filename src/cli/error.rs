@@ -35,6 +35,9 @@ pub enum CliError {
     #[error(transparent)]
     Run(#[from] crate::run::RunError),
 
+    #[error(transparent)]
+    Testing(#[from] crate::testing::TestError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 
@@ -44,7 +47,7 @@ pub enum CliError {
     #[error("`jvmfast add` without an explicit version (`{0}`) is not supported yet — repository metadata lookup for \"latest release\" (seção 9.3) isn't implemented; pass `coordinate@version`")]
     VersionOmittedNotSupported(String),
 
-    #[error("`jvmfast add --dev` is not supported yet — dev-dependencies aren't threaded from the manifest into Module yet (see src/manifest/dto.rs)")]
+    #[error("`jvmfast add --dev` is not supported yet — editing [dev-dependencies] from the CLI isn't implemented (jvmfast test does resolve [dev-dependencies] declared directly in project.toml, see manifest::parse_dev_module)")]
     DevDependenciesNotSupported,
 
     #[error("`jvmfast update <coordinate>` (targeted update) is not supported yet — only a full re-resolution (`jvmfast update`) is")]
@@ -62,11 +65,11 @@ pub enum CliError {
     #[error("Java {0} is required by project.toml but is not installed — declined automatic install (pass `--yes` to install non-interactively)")]
     JdkInstallDeclined(String),
 
-    #[error("no project.lock found — run `jvmfast install` before building/running")]
+    #[error("no project.lock found — run `jvmfast install` before building/running/testing")]
     LockfileMissing,
 
     #[error(
-        "project.lock is stale (project.toml changed since it was generated) — run `jvmfast install` or `jvmfast update` before building/running"
+        "project.lock is stale (project.toml changed since it was generated) — run `jvmfast install` or `jvmfast update` before building/running/testing"
     )]
     LockfileStale,
 
@@ -77,4 +80,12 @@ pub enum CliError {
 
     #[error("program exited with status {0}")]
     ProgramExited(i32),
+
+    #[error(
+        "`jvmfast test --fail-fast` is not supported yet — the JUnit Platform Console Launcher has no native stop-on-first-failure flag to map it to"
+    )]
+    FailFastNotSupported,
+
+    #[error("tests failed (JUnit Platform Console Launcher exited with status {0})")]
+    TestsFailed(i32),
 }

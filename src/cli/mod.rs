@@ -15,6 +15,7 @@ mod error;
 mod install;
 mod jdk;
 mod run;
+mod test;
 mod tree;
 mod why;
 
@@ -26,6 +27,7 @@ pub use jdk::{
     ensure_project_jdk, install_jdk, list as list_jdks, resolve_project_java_version, use_jdk,
 };
 pub use run::run as run_program;
+pub use test::{run as test, TestOptions};
 pub use tree::format_tree;
 pub use why::format_why;
 
@@ -78,6 +80,19 @@ pub enum Command {
     Build,
     /// Compila e executa [run].main-class (exige project.lock válido).
     Run,
+    /// Compila e roda testes via JUnit Platform Console (seção 8.1).
+    Test {
+        /// `"tag:fast"` filtra por tag JUnit; qualquer outro valor é um
+        /// glob de nome de classe (ex. `"*.UserTest"`).
+        #[arg(long)]
+        filter: Option<String>,
+        /// Não suportado — o Console Launcher não tem stop-on-first-failure nativo.
+        #[arg(long = "fail-fast")]
+        fail_fast: bool,
+        /// Grava relatórios JUnit XML em target/test-reports.
+        #[arg(long = "report-xml")]
+        report_xml: bool,
+    },
     /// Exibe a árvore de dependências resolvida.
     Tree,
     /// Explica a origem de um artefato no grafo resolvido.
@@ -140,6 +155,21 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
             .map(|s| format_summary(&s)),
         Command::Build => build::run(root),
         Command::Run => run::run(root),
+        Command::Test {
+            filter,
+            fail_fast,
+            report_xml,
+        } => {
+            test::run(
+                root,
+                test::TestOptions {
+                    filter,
+                    fail_fast,
+                    report_xml,
+                },
+            )
+            .await
+        }
         Command::Tree => {
             let workspace = load_workspace(root)?;
             let output = resolve_for_diagnostics(root, workspace.modules.clone()).await?;

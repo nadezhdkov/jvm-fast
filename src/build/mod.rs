@@ -5,7 +5,10 @@ mod resources;
 mod sources;
 
 pub use classpath::locked_classpath;
+pub use compile::compile;
 pub use error::BuildError;
+pub use resources::copy_resources;
+pub use sources::collect_java_sources;
 
 use crate::cache::CacheStore;
 use crate::domain::Workspace;

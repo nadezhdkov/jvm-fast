@@ -15,5 +15,6 @@ pub mod mediation;
 pub mod pom;
 pub mod resolve;
 pub mod run;
+pub mod testing;
 pub mod version;
 pub mod workspace;

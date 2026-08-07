@@ -17,6 +17,19 @@ pub fn parse_module(path: &Path) -> Result<Module, ManifestError> {
     convert::to_module(manifest, root)
 }
 
+/// `[dev-dependencies]` (seção 3, 8.1) como um `Module` sintético — ver
+/// `convert::to_dev_module`. Reparseia o manifesto independentemente de
+/// `parse_module`, mesmo precedente de `parse_repositories`/
+/// `parse_java_version` (releitura barata em vez de compartilhar um parse).
+pub fn parse_dev_module(path: &Path) -> Result<Option<Module>, ManifestError> {
+    let manifest = parse_manifest(path)?;
+    let root = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    convert::to_dev_module(manifest, root)
+}
+
 /// `[repositories]` (seção 3) não tem campo equivalente em `Module` — por
 /// design, seção 3.1 não modela repositórios no domínio (nem `Module` nem
 /// `Workspace`). É configuração de *como* resolver, não *o que* resolver,

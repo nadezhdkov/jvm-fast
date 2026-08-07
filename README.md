@@ -43,10 +43,12 @@
   list`/`jdk use`, e `[project].java-version` (incl. alias `"lts"`) resolvido
   e instalado automaticamente (com confirmação, a menos que `--yes`) por
   `install`/`update` (Fase 2 completa)
-- Compilação e execução diretas com `jvmfast build`/`run` (via
-  `javac`/`java`, sem POM ou build Gradle intermediário) — `test` ainda não
-  (Fase 3 em andamento)
-- Testes via JUnit Platform Console (planejado — Fase 3)
+- Compilação, execução e testes diretos com `jvmfast build`/`run`/`test`
+  (via `javac`/`java`, sem POM ou build Gradle intermediário) — **Fase 3
+  completa**
+- Testes via JUnit Platform Console Standalone, tratado como dependência
+  interna (baixado e cacheado automaticamente, nunca declarado no
+  manifesto)
 - Cache global de artefatos, content-addressable
 - Suporte a BOMs para gestão centralizada de versões
 - Exclusions de dependências transitivas
@@ -95,11 +97,12 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/download` | Download paralelo de artefatos via `reqwest`/`tokio` (seção 6.2 passo 6) | Implementado — primeiro código `async` do projeto |
 | `src/maven` | Layout de path Maven (`group/artifact/version/...`) compartilhado entre `pom::http` e `download` | Implementado |
 | `src/resolve` | Orquestra BOMs → exclusions → grafo → mediação (seção 6.2, passos 3–5) | Implementado |
-| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`build`/`run`/`tree`/`why`/`jdk` (seção 9) | Fase 1 e Fase 2 completas; `build`/`run` implementados (Fase 3 em andamento) |
+| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`build`/`run`/`test`/`tree`/`why`/`jdk` (seção 9) | Fases 1, 2 e 3 completas |
 | `src/jdk` | Instala JDKs Temurin via API do Adoptium (seção 7) + resolve o alias `"lts"` | Implementado |
 | `src/config` | Leitura/escrita de `[defaults]` em `~/.config/jvmfast/config.toml` (seção 3.5) | Implementado — só `[defaults]`; `[network]`/`[output]` ainda não são lidos |
 | `src/build` | Compila `src/main/java` com `javac` + copia `src/main/resources` para `target/classes` (seção 8) | Implementado |
-| `src/run` | Executa `[run].main-class` via `java`, stdio herdado (seção 8) | Implementado — `jvmfast test` ainda não |
+| `src/run` | Executa `[run].main-class` via `java`, stdio herdado (seção 8) | Implementado |
+| `src/testing` | Resolve `[dev-dependencies]`, baixa o JUnit Platform Console Standalone e roda testes (seção 8.1) | Implementado — dev-deps não persistem em `project.lock` ainda |
 
 ---
 
@@ -151,8 +154,10 @@ cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk use 21
 `install`/`update` já resolvem `[project].java-version` (auto-instalando a
 JDK do projeto, com confirmação a menos que `--yes` seja passado);
 `jvmfast build` compila `src/main/java`/copia `src/main/resources` para
-`target/classes` usando essa JDK; e `jvmfast run` compila e executa
-`[run].main-class` — só `jvmfast test` (Fase 3) ainda não existe.
+`target/classes` usando essa JDK; `jvmfast run` compila e executa
+`[run].main-class`; e `jvmfast test` compila `src/test/java` e roda os
+testes via JUnit Platform Console Standalone — a Fase 3 inteira já
+funciona ponta a ponta.
 
 ---
 
@@ -170,8 +175,7 @@ JDK do projeto, com confirmação a menos que `--yes` seja passado);
 
 ## Exemplos
 
-`project.toml` mínimo (`[dev-dependencies]` é parseado mas ainda não chega
-ao resolvedor — ver gap em `CLAUDE.md`):
+`project.toml` mínimo:
 
 ```toml
 [project]
@@ -182,6 +186,9 @@ java-version = "21"
 [dependencies]
 "com.fasterxml.jackson.core:jackson-databind" = "2.17.0"
 "org.slf4j:slf4j-api" = "2.0.13"
+
+[dev-dependencies]
+"org.hamcrest:hamcrest" = "2.2"
 
 [repositories]
 default = "https://repo1.maven.org/maven2"
@@ -200,7 +207,10 @@ jvmfast tree                                        # árvore de dependências r
 jvmfast why "com.fasterxml.jackson.core:jackson-core"
 jvmfast build                                       # compila src/main/java para target/classes
 jvmfast run                                         # compila e executa [run].main-class
-jvmfast test                                        # ainda não implementado (Fase 3)
+jvmfast test                                        # compila src/test/java e roda via JUnit Platform Console
+jvmfast test --filter "tag:fast"                    # só testes com essa tag
+jvmfast test --filter "*.UserTest"                  # só classes cujo nome bate com o glob
+jvmfast test --report-xml                           # grava relatórios JUnit XML em target/test-reports
 ```
 
 ---
@@ -213,9 +223,14 @@ jvmfast test                                        # ainda não implementado (F
 - Nomes de teste descrevem o comportamento esperado, não a issue/PR que os
   motivou.
 - Exceção: `tests/build.rs`/`tests/cli_build.rs`/`tests/run.rs`/
-  `tests/cli_run.rs` (Fase 3) rodam contra a JDK real do ambiente
-  (`javac`/`java` no `PATH`) — `jvmfast build`/`run` só invocam um
-  compilador/JVM de verdade, então não faz sentido mocká-los.
+  `tests/cli_run.rs`/`tests/cli_test.rs` (Fase 3) rodam contra a JDK real
+  do ambiente (`javac`/`java` no `PATH`) — `jvmfast build`/`run`/`test` só
+  invocam um compilador/JVM de verdade, então não faz sentido mocká-los.
+  `tests/cli_test.rs` também baixa o JUnit Platform Console Standalone do
+  Maven Central real de propósito (é a dependência interna que
+  `jvmfast test` sempre baixa de lá, nunca do repositório do projeto) — a
+  segunda e única outra exceção deste repo à regra de nunca tocar rede
+  real em teste.
 
 ```bash
 cargo test
@@ -245,7 +260,8 @@ para detalhes; estado detalhado dos marcos em
 - [x] **Fase 2 completa** — gerenciamento de JDK, ponta a ponta
 - [x] Marco — `jvmfast build`: compila `src/main/java` com `javac` + copia `src/main/resources` (seção 8)
 - [x] Marco — `jvmfast run`: compila e executa `[run].main-class`/`jvm-args` via `java` (seção 8)
-- [ ] Fase 3 — `test` (em andamento)
+- [x] Marco — `jvmfast test`: `[dev-dependencies]` + JUnit Platform Console Standalone (seção 8.1)
+- [x] **Fase 3 completa** — build/run/test, ponta a ponta
 - [ ] Fase 4 — interoperabilidade (`import-pom`, `import-gradle`)
 - [ ] Fase 5 — workspace e multi-módulo
 
