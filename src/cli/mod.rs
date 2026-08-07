@@ -13,6 +13,7 @@ mod context;
 mod edit;
 mod error;
 mod import;
+mod init;
 mod install;
 mod jdk;
 mod run;
@@ -25,6 +26,7 @@ pub use edit::{add_dependency, remove_dependency, ManifestEditError};
 pub use error::CliError;
 pub use import::run as import_pom;
 pub use import::run_gradle as import_gradle;
+pub use init::run as init;
 pub use install::{add, install, remove, InstallSummary};
 pub use jdk::{
     ensure_project_jdk, install_jdk, list as list_jdks, resolve_project_java_version, use_jdk,
@@ -54,6 +56,15 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Cria um project.toml mínimo no diretório atual (seção 9.2).
+    Init {
+        /// Nome do projeto; default: nome do diretório atual.
+        #[arg(long)]
+        name: Option<String>,
+        /// java-version do projeto (aceita "lts"); default: "lts".
+        #[arg(long = "java-version")]
+        java_version: Option<String>,
+    },
     /// Resolve e baixa conforme project.lock (ou gera um se ausente/inválido).
     Install {
         /// Instala a JDK do projeto automaticamente sem pedir confirmação
@@ -157,6 +168,7 @@ pub async fn run(cli: Cli) -> std::process::ExitCode {
 
 async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
     match command {
+        Command::Init { name, java_version } => init::run(root, name, java_version),
         Command::Install { yes } => install::install(root, false, yes)
             .await
             .map(|s| format_summary(&s)),

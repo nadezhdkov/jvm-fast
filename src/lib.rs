@@ -10,6 +10,7 @@ pub mod gradlebridge;
 pub mod gradleimport;
 pub mod graph;
 pub mod import;
+pub mod init;
 pub mod jdk;
 pub mod lockfile;
 pub mod manifest;

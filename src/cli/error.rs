@@ -42,6 +42,9 @@ pub enum CliError {
     Import(#[from] crate::import::ImportError),
 
     #[error(transparent)]
+    Init(#[from] crate::init::InitError),
+
+    #[error(transparent)]
     GradleImport(#[from] crate::gradleimport::GradleImportError),
 
     #[error("background task failed: {0}")]

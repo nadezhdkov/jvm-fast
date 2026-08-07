@@ -1108,9 +1108,62 @@ shortcuts):
   root — no `-o`/output-path override wired to the CLI yet (the
   underlying `import_pom` function already takes an explicit
   `manifest_path`, so this is only a CLI-flag gap, not a design one).
-- No `jvmfast init` (seção 9.2) exists yet either — `import-pom` is
-  currently the *only* way to get a `project.toml` onto disk without
-  hand-writing one.
+- ~~No `jvmfast init` (seção 9.2) exists yet~~ **Fixed** — see the
+  `jvmfast init` writeup below.
+
+**`jvmfast init` (seção 9.2) — implemented**: `src/init/` (new module,
+`init::init_project(project_dir, name, java_version) -> Result<InitReport,
+InitError>`) writes a minimal `project.toml` (`[project]` with
+`name`/`version = "0.1.0"`/`java-version`, an empty `[dependencies]`, and
+— only when a `Main.java` placeholder is actually written, see below — a
+`[run]` block pointing at it) plus `src/main/java`/`src/test/java`
+directories. Refuses to run over an existing `project.toml`
+(`InitError::ManifestAlreadyExists`) and, per seção 9.2 point 5, refuses
+to run at all when a `pom.xml` is already present
+(`InitError::PomXmlDetected`, pointing at `jvmfast import-pom` instead of
+silently generating a from-scratch manifest that would drop the POM's
+already-declared dependencies) — `import-gradle`'s `gradlew`-detection
+gap is *not* mirrored here on purpose, since a bare `gradlew` with no
+`pom.xml` is a much weaker signal of "this is already a real project" (a
+fresh `jvmfast init` scaffold has no `gradlew` of its own to collide
+with, unlike `pom.xml`, which `import-pom` reads directly). A
+`Main.java` "Hello, World!" placeholder is written into `src/main/java`
+only if that directory doesn't already contain any `.java` file
+(recursively, `init::dir_has_java_files`) — re-running `init` after
+manually deleting just `project.toml` (or pointing it at a directory that
+already has real source under `src/main/java` for some other reason)
+never clobbers it, and the generated manifest's `[run]` section is
+omitted too in that case, since there's no `Main` class this `init`
+invocation itself can vouch for.
+
+One deliberate deviation from the doc's literal seção 9.2 text: `jvmfast
+init` with no flags at all is documented as *interactive* ("pergunta nome
+e java-version"). This implementation is **not** interactive — omitting
+`--name`/`--java-version` derives sane non-interactive defaults instead
+(`name` from the target directory's own name via
+`Path::canonicalize().file_name()`; `java-version` defaults to `"lts"`,
+the same alias every other `[project].java-version` consumer in this
+codebase already resolves), and reports what it defaulted via
+`InitReport.notes` (surfaced in the CLI summary) rather than staying
+silent about it. This follows the same precedent
+`cli::jdk::confirm_install`'s own doc comment already establishes for
+this codebase: blocking a command on stdin is only ever used for an
+*opt-out* confirmation with a `--yes` escape hatch (seção 7's JDK
+auto-install prompt), never as the *only* way to supply a value a command
+needs to proceed — a hung prompt in a non-terminal invocation (CI, or a
+`cargo test` binary) is worse than a documented non-interactive default,
+and the existing JDK-prompt precedent already accepts "the interactive
+branch itself has no automated test, verified by code review/manual
+testing only" as the trade-off for keeping stdin-blocking narrowly
+scoped. `src/cli/init.rs` wires `jvmfast init [--name <name>]
+[--java-version <version>]`, both optional. Tested with `tests/init.rs`
+(the module function directly — explicit name/version, derived
+defaults, placeholder skipped when `src/main/java` already has sources,
+both refusal cases) and `tests/cli_init.rs` (the CLI wiring layer,
+mirroring `tests/cli_import.rs`'s pattern); verified end to end by hand
+too, outside the test suite, chaining a real `jvmfast init` → `install`
+→ `build` → `run` against the real system `javac`/`java` and confirming
+`Hello, World!` actually prints.
 
 Next milestones, in order — **Fase 3 is complete** (build/run/test all
 implemented), both real-world Maven Central gaps that testing surfaced
@@ -1148,18 +1201,17 @@ any module, root or member, can have its own `[run]`/`[dev-dependencies]`
 — defaults to the root module when omitted, so single-module workspaces
 are unaffected. `[repositories]`/`java-version` stay root-only by design
 (whole-workspace configuration, not per-module concerns) — see the Fase 5
-writeup above for the full breakdown. Outside Fase 5, the natural next
-picks
-are, in no particular priority order: `jvmfast init`
-(seção 9.2 — still the only way to get a `project.toml` onto disk without
-hand-writing one is `import-pom`/`import-gradle`, both of which require an
-existing Maven/Gradle project to import *from*); credentials/auth (seção
-3.2); global `config.toml` loading beyond `[defaults]` (seção 3.5,
-overlaying the full documented precedence chain onto
-`WorkspaceConfig::default()`); extending `JvmfastDependencyModel` to carry
-Gradle's configured Java version (closing `import-gradle`'s `java-version`
-gap above); or any of the other Fase 1/Fase 2/Fase 3/Fase 4 gaps listed
-above, each independently pickable.
+writeup above for the full breakdown. `jvmfast init` (seção 9.2) is also
+now implemented — see its writeup above — so a `project.toml` can be
+created from scratch without an existing Maven/Gradle project to import
+from. Outside Fase 5, the natural next picks are, in no particular
+priority order: credentials/auth (seção 3.2); global `config.toml`
+loading beyond `[defaults]` (seção 3.5, overlaying the full documented
+precedence chain onto `WorkspaceConfig::default()`); extending
+`JvmfastDependencyModel` to carry Gradle's configured Java version
+(closing `import-gradle`'s `java-version` gap above); or any of the other
+Fase 1/Fase 2/Fase 3/Fase 4 gaps listed above, each independently
+pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — binding since before Fase 5
 started, and now proven in practice by real multi-module loading and
