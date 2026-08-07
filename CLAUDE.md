@@ -36,9 +36,34 @@ artifacts actually publish — see "Known, deliberate gaps inside Fase 1"
 below for the full writeup), and `graph::build_graph` not filtering POM
 dependencies by `<scope>` is **also fixed** (test/provided/system-scoped
 transitives no longer leak into the graph as if compile-scoped — same
-section below). Fase 4 (interop) is **not started** —
-`docs/architecture.md` seção 12 and the roadmap below are the spec to
-implement against for it. See "Roadmap" below for the specific gaps left
+section below). **Fase 4 (interop, seção 10) has started**: `jvmfast
+import-pom [pom.xml] [-o project.toml]` reads an existing `pom.xml` and
+writes an equivalent `project.toml`, never touching the source `pom.xml`
+and never overwriting an existing manifest
+(`ImportError::ManifestAlreadyExists`) — the two files can coexist during
+a transition, per seção 10. It preserves dependencies (including
+`${property}` interpolation, resolved in-place, no parent-POM
+inheritance), `test`-scoped dependencies as `[dev-dependencies]`,
+`<dependencyManagement>` BOM imports as `[boms]`, per-dependency
+`<exclusions>` as `[exclusions]`, and `<repositories>` (first declared
+becomes `default`, matching how resolution already only reads that key —
+see the existing multi-repository-fallback gap below). `java-version` is
+resolved from `maven.compiler.release`/`.target`/`.source`/`java.version`
+properties, falling back to `"lts"` with a report note when none are
+declared. Maven version ranges (`[1.0,2.0)`, `[1.5,)`, `[1.0]`...) are
+translated only when there's a direct equivalent — today that's just a
+single pinned value (`[1.0]` → `1.0`); every open-ended or multi-segment
+range is reported as needing manual attention rather than guessed, since
+computing "the greatest version satisfiable at import time" would need a
+`maven-metadata.xml` lookup that doesn't exist yet (same gap as `jvmfast
+add` without an explicit version). Anything else without a jvm-fast
+equivalent — `provided`/`system`-scoped dependencies, unresolved
+properties, `<profiles>`, `<build><plugins>`, repositories beyond the
+first — is skipped from the generated manifest and surfaced as a report
+note instead of silently dropped or guessed. `jvmfast import-gradle`
+(Tooling API bridge, seção 10) is **not started** — `docs/architecture.md`
+seção 10 and the roadmap below are the spec to implement against for it.
+See "Roadmap" below for the specific gaps left
 inside Fase 1 (targeted `update <coord>`, `add` without an explicit
 version, editing `[dev-dependencies]` from the CLI, multi-repository
 fallback, per-host download throttling), Fase 2 (exact-version JDK
@@ -321,6 +346,94 @@ typed, rejected-not-faked error today, not silent scope creep.
   resolution itself is exercised by the same mock-server-backed pattern
   `cli::install` already uses, not duplicated here).
 
+**Fase 4 (interop, seção 10) — `import-pom` started, `import-gradle` not
+started**:
+
+- `src/pom/xml.rs` — extended (not rewritten) to also capture
+  `<project><artifactId>`/`<version>` (direct only, no `<parent>`
+  inheritance), `<properties>`, `<repositories>` (`id`/`url` pairs, in
+  declaration order), per-dependency `<exclusions>`, and presence flags for
+  top-level `<profiles>`/`<build><plugins>` — all additive to `ParsedPom`/
+  `PomDependency` (`project_artifact_id`, `project_version`, `properties`,
+  `repositories`, `has_profiles`, `has_plugins`, `PomDependency.exclusions`),
+  consumed only by `crate::import`; the normal resolution path
+  (`crate::graph`/`crate::bom`) never reads any of these new fields, so
+  `jvmfast install`/`add`/`test` behavior is unchanged. Text-target
+  resolution was refactored from a single depth-tracked `current_field`
+  into a `TextTarget` enum recomputed fresh per open tag, so the new
+  sibling contexts (exclusion fields, repository fields, project-level
+  fields, properties) can't leak state into each other.
+- `src/import/` (new module) — `import_pom(pom_path, manifest_path)`:
+  reads `pom_path`, refuses to run if `manifest_path` already exists
+  (`ImportError::ManifestAlreadyExists`, never overwrites), parses via
+  `pom::parse_pom_xml`, and writes a new `project.toml`. Requires a direct
+  `<project><artifactId>`/`<version>` (`ImportError::MissingArtifactId`/
+  `MissingVersion` otherwise — POMs that rely on `<parent>` inheritance for
+  either need to declare them explicitly first, same parent-POM-inheritance
+  gap already documented for `pom::xml` since Fase 1).
+  - `src/import/range.rs` — `translate_maven_range` (Maven range syntax,
+    `[1.0,2.0)`/`[1.5,)`/`(,2.0]`/`[1.0]`, seção 10). Only `[x]` (a single
+    pinned value) has a direct jvm-fast equivalence; every open-ended or
+    multi-segment range returns `Unresolved` rather than guessing — seção
+    10's "maior valor satisfazível no momento do import" would need a
+    `maven-metadata.xml` lookup, the same missing infrastructure as
+    `jvmfast add` without an explicit version
+    (`CliError::VersionOmittedNotSupported`) and
+    `GraphError::UnresolvedVersionRange` — not implemented here either, on
+    purpose, rather than half-built just for import.
+  - `src/import/generate.rs` — `render_manifest`, a pure function (no I/O)
+    that formats the `project.toml` text from already-resolved data, kept
+    separate from the parsing/interpolation logic in `mod.rs` so the output
+    format is testable independent of a real `pom.xml`.
+  - `mod.rs`'s `interpolate` resolves `${property}` references (one or more
+    per string) against `ParsedPom.properties` — `None` (not a fabricated
+    literal `${...}` string) if any referenced key is missing, which the
+    caller turns into a report note and skips that dependency/BOM entry
+    rather than writing a broken version into the generated manifest.
+    Deliberately does not follow `<parent>` POM property inheritance (same
+    gap as above).
+  - Import mapping decisions: `test`-scoped dependencies become
+    `[dev-dependencies]`; `provided`/`system`-scoped dependencies have no
+    jvm-fast equivalent and are skipped with a report note;
+    `<dependencyManagement>` entries with `<scope>import</scope>` become
+    `[boms]` (version interpolated same as any other); a dependency with no
+    `<version>` at all is imported as `dependency = true` (BOM-managed) only
+    if at least one BOM import was found in `<dependencyManagement>` —
+    otherwise it's skipped with a note, since jvm-fast has no local
+    (non-BOM) managed-version concept to fall back to; `<repositories>` are
+    imported in declaration order with the *first* becoming `default` (the
+    only key `crate::graph`'s resolution path actually reads today — see
+    the existing multi-repository-fallback gap below) and the rest keyed by
+    their `<id>` (or `repo-N` if absent), with a report note counting how
+    many extra ones were imported but not yet resolved against.
+  - `<profiles>`/`<build><plugins>` presence becomes a report note each
+    (seção 10: "reportando quais elementos não têm equivalente... precisam
+    de atenção manual") — detected, not parsed in any depth, since only
+    their presence (not content) has no jvm-fast equivalent to preserve.
+- `src/cli/import.rs` — wires `jvmfast import-pom [pom] [-o path]`
+  (`pom` defaults to `pom.xml` at the project root; output is always
+  `project.toml` at the root). Prints a one-line-per-note summary of
+  everything `import_pom`'s report flagged, if anything did.
+- `src/cli/error.rs` — `CliError::Import(#[from] ImportError)`.
+- Tested with fixture-only POMs (`tests/fixtures/import/`,
+  `tests/fixtures/poms/import_metadata.xml`) — no real network, no real
+  Maven Central, consistent with every other parsing-layer test in this
+  repo; a `full_pom.xml` fixture exercises every conversion path (plain/
+  interpolated/BOM-managed/pinned-range dependency versions,
+  provided-scope skip, unresolved-property skip, unresolved-range skip,
+  exclusions, dev-dependencies, BOM import, multiple repositories,
+  profiles/plugins detection) in one integration test
+  (`tests/import.rs`), plus dedicated `tests/import_range.rs` for the
+  range-translation boundary and `tests/cli_import.rs` for the CLI wiring
+  (default path, explicit path, already-exists rejection, report
+  formatting).
+- `jvmfast import-gradle` (Tooling API bridge, `jvmfast-gradle-bridge.jar`,
+  seção 10) is entirely **not started** — no JVM helper artifact, no
+  init-script generation, no bridge invocation. This is a materially
+  bigger undertaking than `import-pom` (a new packaged JVM component with
+  its own build/versioning, per seção 10's own "custo assumido
+  conscientemente" writeup), not attempted as part of this pass.
+
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
 
@@ -482,21 +595,64 @@ shortcuts):
   `jvmfast` indefinitely; acceptable for a local dev tool in v1, not
   flagged as a problem to fix without a concrete need.
 
+**Known, deliberate gaps inside Fase 4 so far**:
+
+- `jvmfast import-gradle` doesn't exist at all yet — see the writeup above;
+  everything Gradle-related in seção 10 (Tooling API bridge, mediation
+  divergence warning, multi-project iteration) is still just spec.
+- `import-pom` never follows `<parent>` POM inheritance — a POM whose
+  `<artifactId>`/`<version>`/properties/dependency versions come from a
+  parent (extremely common in real multi-module Maven projects) fails
+  fast (`MissingArtifactId`/`MissingVersion`) or silently skips affected
+  dependencies (unresolved `${property}`) rather than resolving the
+  parent chain. Same underlying gap `pom::xml` has documented since Fase
+  1, just newly user-visible through a command that reads real-world POMs
+  directly instead of only fixture-shaped ones.
+- Maven version ranges without a single-pinned-value direct equivalent
+  (`[1.5,)`, `(,2.0]`, `[1.0,2.0)`, multi-segment ranges) are always
+  skipped with a report note, never resolved to "the greatest version
+  satisfiable at import time" as seção 10 describes as the fallback —
+  that needs a `maven-metadata.xml` lookup this codebase doesn't have yet
+  (same missing piece as `jvmfast add` without a version and
+  `GraphError::UnresolvedVersionRange`).
+- A dependency with no `<version>` and no BOM import anywhere in
+  `<dependencyManagement>` is skipped with a report note — `import-pom`
+  doesn't attempt to resolve it against a *local* (non-import) managed
+  entry with a plain version either (seção 10 only documents preserving
+  BOM imports, not local `dependencyManagement` version pinning as a
+  concept jvm-fast has anywhere).
+- Repository entries beyond the first are imported into `[repositories]`
+  as-is, but jvm-fast's own resolution only ever reads the `default` key
+  (existing Fase 1 gap) — so an imported project with multiple POM
+  repositories gets a manifest that *looks* complete but silently only
+  resolves against the first one, same limitation `import-pom` itself
+  reports as a note but can't fix on its own.
+- `jvmfast import-pom` always writes to `project.toml` at the project
+  root — no `-o`/output-path override wired to the CLI yet (the
+  underlying `import_pom` function already takes an explicit
+  `manifest_path`, so this is only a CLI-flag gap, not a design one).
+- No `jvmfast init` (seção 9.2) exists yet either — `import-pom` is
+  currently the *only* way to get a `project.toml` onto disk without
+  hand-writing one.
+
 Next milestones, in order — **Fase 3 is complete** (build/run/test all
-implemented), and both real-world Maven Central gaps this session's
-testing surfaced (checksum sidecar format, POM `<scope>` filtering) are
-now fixed too — `jvmfast install`/`add`/`test` handle real, ordinary
-dependencies (`slf4j-api`, `assertj-core`, ...) correctly now, not just
-fixture-shaped ones. The still-open, older, separately-documented
-property-interpolation/parent-POM-inheritance gap (seção 3.3 area, present
-since Fase 1) remains a real limitation for POMs that lean on it (e.g.
-`com.google.guava:guava`'s own `<dependencyManagement>`-managed
-`jsr305` dependency) — worth calling out as a candidate for the next pick,
-though not promised or started here. Fase 4 (interop, seção 10:
-`import-pom`/`import-gradle`) is the next *phase* per the roadmap.
-Also pending: credentials/auth (seção 3.2) → global `config.toml` loading
-(seção 3.5, overrides `WorkspaceConfig::default()`) → the rest of the
-Fase 1/Fase 2/Fase 3 gaps listed above, each independently pickable.
+implemented), both real-world Maven Central gaps that testing surfaced
+(checksum sidecar format, POM `<scope>` filtering) are fixed, and **Fase 4
+has started**: `jvmfast import-pom` is implemented end to end against
+fixture POMs (see the writeup and gaps above). The still-open, older,
+separately-documented property-interpolation/parent-POM-inheritance gap
+(seção 3.3 area, present since Fase 1) remains a real limitation for POMs
+that lean on it (e.g. `com.google.guava:guava`'s own
+`<dependencyManagement>`-managed `jsr305` dependency, and now also
+`import-pom`'s own parent-inheritance gap above) — worth calling out as a
+candidate for a future pick, though not promised or started here.
+`jvmfast import-gradle` (Tooling API bridge) is the next natural pick to
+finish out Fase 4, but is a materially bigger, separately-scoped
+undertaking (a new packaged JVM component, seção 10) — not started.
+Also pending: `jvmfast init` (seção 9.2) → credentials/auth (seção 3.2) →
+global `config.toml` loading (seção 3.5, overrides
+`WorkspaceConfig::default()`) → the rest of the Fase 1/Fase 2/Fase 3/Fase 4
+gaps listed above, each independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

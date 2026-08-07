@@ -262,7 +262,9 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — `jvmfast run`: compila e executa `[run].main-class`/`jvm-args` via `java` (seção 8)
 - [x] Marco — `jvmfast test`: `[dev-dependencies]` + JUnit Platform Console Standalone (seção 8.1)
 - [x] **Fase 3 completa** — build/run/test, ponta a ponta
-- [ ] Fase 4 — interoperabilidade (`import-pom`, `import-gradle`)
+- [x] Marco — `jvmfast import-pom`: gera `project.toml` a partir de um `pom.xml` existente (seção 10)
+- [ ] Marco — `jvmfast import-gradle` via Gradle Tooling API (seção 10)
+- [ ] **Fase 4 completa** — interoperabilidade, ponta a ponta
 - [ ] Fase 5 — workspace e multi-módulo
 
 ---

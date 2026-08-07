@@ -31,9 +31,11 @@ impl FixturePomProvider {
                         coordinate: c.to_string(),
                         version: v.to_string(),
                         scope: String::new(),
+                        ..Default::default()
                     })
                     .collect(),
                 managed_dependencies: Vec::new(),
+                ..Default::default()
             },
         );
         self

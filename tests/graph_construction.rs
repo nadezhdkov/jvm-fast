@@ -27,6 +27,7 @@ impl FixturePomProvider {
             ParsedPom {
                 dependencies,
                 managed_dependencies: Vec::new(),
+                ..Default::default()
             },
         );
         self
@@ -51,6 +52,7 @@ fn pom_dep(coordinate: &str, version: &str) -> PomDependency {
         coordinate: coordinate.to_string(),
         version: version.to_string(),
         scope: String::new(),
+        ..Default::default()
     }
 }
 
@@ -59,6 +61,7 @@ fn pom_dep_with_scope(coordinate: &str, version: &str, scope: &str) -> PomDepend
         coordinate: coordinate.to_string(),
         version: version.to_string(),
         scope: scope.to_string(),
+        ..Default::default()
     }
 }
 

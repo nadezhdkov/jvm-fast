@@ -43,9 +43,11 @@ fn plain_pom(dependencies: Vec<(&str, &str)>) -> ParsedPom {
                 coordinate: coordinate.to_string(),
                 version: version.to_string(),
                 scope: String::new(),
+                ..Default::default()
             })
             .collect(),
         managed_dependencies: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -102,6 +104,7 @@ fn resolves_bom_managed_dependency_end_to_end() {
                     version: "2.17.0".to_string(),
                     is_bom_import: false,
                 }],
+                ..Default::default()
             },
         )
         .with_pom(

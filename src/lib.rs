@@ -7,6 +7,7 @@ pub mod domain;
 pub mod download;
 pub mod exclusion;
 pub mod graph;
+pub mod import;
 pub mod jdk;
 pub mod lockfile;
 pub mod manifest;

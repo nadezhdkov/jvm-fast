@@ -25,6 +25,7 @@ impl FixturePomProvider {
             ParsedPom {
                 dependencies: Vec::new(),
                 managed_dependencies: entries,
+                ..Default::default()
             },
         );
         self

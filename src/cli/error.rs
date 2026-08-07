@@ -38,6 +38,9 @@ pub enum CliError {
     #[error(transparent)]
     Testing(#[from] crate::testing::TestError),
 
+    #[error(transparent)]
+    Import(#[from] crate::import::ImportError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 
