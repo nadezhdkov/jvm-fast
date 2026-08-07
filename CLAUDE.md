@@ -348,16 +348,32 @@ shortcuts):
   again after that, since the real SHA-256 is what lands in
   `project.lock`. Verified against real Maven Central (`slf4j-api`
   installs and locks cleanly now, was a hard failure before).
-- **[Same session, same discovery path]** `pom::xml` parses `<scope>` but
-  `graph::build_graph` never filters on it — a dependency's `test`/
-  `provided`/`system`-scoped children are treated as ordinary transitive
-  dependencies instead of being excluded from propagation (real Maven
-  semantics: only `compile`/`runtime` scope propagates transitively).
-  Surfaced by trying `org.assertj:assertj-core` as a real
-  `[dev-dependencies]` entry, which pulled in a test-scoped `hamcrest-core`
-  dependency with an unresolved `${hamcrestVersion}` property (the
-  existing "no property interpolation" gap, seção 3.3 area, compounding
-  it). Also not fixed here — same reasoning as the checksum gap above.
+- ~~`pom::xml` parses `<scope>` but `graph::build_graph` never filters on
+  it~~ **Fixed.** Same discovery session, same real-Maven-Central testing:
+  a dependency's `test`/`provided`/`system`-scoped children were being
+  treated as ordinary transitive dependencies instead of excluded from
+  propagation (real Maven semantics: only `compile`/`runtime` — and the
+  unmarked default, which *means* `compile` — propagate transitively).
+  Surfaced trying `org.assertj:assertj-core` as a real
+  `[dev-dependencies]` entry, which pulled in a test-scoped
+  `hamcrest-core` dependency with an unresolved `${hamcrestVersion}`
+  property (a *different*, still-open, and much older gap — "no property
+  interpolation/parent POM inheritance", documented in `pom::xml`'s own
+  doc comment since Fase 1 — that this scope leak was incidentally
+  triggering). `PomDependency` now carries the raw `<scope>` string
+  (`pom::xml::on_close`); `graph::build_graph` skips
+  `propagates_transitively(&transitive.scope) == false` children before
+  enqueuing them. Verified against real Maven Central: `assertj-core` as
+  a `[dev-dependencies]` entry now resolves and its `assertThat` API
+  compiles/runs correctly in `jvmfast test` (was a hard failure before,
+  via the property-interpolation gap it used to trigger as a side
+  effect). Note `com.google.guava:guava` still fails as a *production*
+  dependency — but via that same older, separate, already-documented
+  property-interpolation/parent-inheritance gap (guava's own POM manages
+  `jsr305`'s version through its own `<dependencyManagement>`, which this
+  project's POM parser doesn't resolve), not the scope-filtering gap this
+  entry describes, and not something either of this session's two fixes
+  ever claimed to address.
 - `jvmfast update <coord>` (targeted update) is rejected
   (`CliError::TargetedUpdateNotSupported`) — only a full re-resolution
   (`jvmfast update`, no coordinate) is implemented.
@@ -452,16 +468,21 @@ shortcuts):
   `jvmfast` indefinitely; acceptable for a local dev tool in v1, not
   flagged as a problem to fix without a concrete need.
 
-Next milestones, in order — **Fase 3 is now complete** (build/run/test all
-implemented). The two gaps discovered this session in real-world Maven
-Central usage (checksum sidecar format, POM `<scope>` filtering) are
-arguably higher priority than starting Fase 4, since they block
-`jvmfast install`/`add`/`test` against a meaningful slice of real
-dependencies today — but Fase 4 (interop, seção 10: `import-pom`/
-`import-gradle`) is the next *phase* per the roadmap. Also pending:
-credentials/auth (seção 3.2) → global `config.toml` loading (seção 3.5,
-overrides `WorkspaceConfig::default()`) → the rest of the Fase 1/Fase
-2/Fase 3 gaps listed above, each independently pickable.
+Next milestones, in order — **Fase 3 is complete** (build/run/test all
+implemented), and both real-world Maven Central gaps this session's
+testing surfaced (checksum sidecar format, POM `<scope>` filtering) are
+now fixed too — `jvmfast install`/`add`/`test` handle real, ordinary
+dependencies (`slf4j-api`, `assertj-core`, ...) correctly now, not just
+fixture-shaped ones. The still-open, older, separately-documented
+property-interpolation/parent-POM-inheritance gap (seção 3.3 area, present
+since Fase 1) remains a real limitation for POMs that lean on it (e.g.
+`com.google.guava:guava`'s own `<dependencyManagement>`-managed
+`jsr305` dependency) — worth calling out as a candidate for the next pick,
+though not promised or started here. Fase 4 (interop, seção 10:
+`import-pom`/`import-gradle`) is the next *phase* per the roadmap.
+Also pending: credentials/auth (seção 3.2) → global `config.toml` loading
+(seção 3.5, overrides `WorkspaceConfig::default()`) → the rest of the
+Fase 1/Fase 2/Fase 3 gaps listed above, each independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

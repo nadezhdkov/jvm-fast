@@ -42,6 +42,7 @@ fn plain_pom(dependencies: Vec<(&str, &str)>) -> ParsedPom {
             .map(|(coordinate, version)| PomDependency {
                 coordinate: coordinate.to_string(),
                 version: version.to_string(),
+                scope: String::new(),
             })
             .collect(),
         managed_dependencies: Vec::new(),

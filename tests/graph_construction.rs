@@ -50,6 +50,15 @@ fn pom_dep(coordinate: &str, version: &str) -> PomDependency {
     PomDependency {
         coordinate: coordinate.to_string(),
         version: version.to_string(),
+        scope: String::new(),
+    }
+}
+
+fn pom_dep_with_scope(coordinate: &str, version: &str, scope: &str) -> PomDependency {
+    PomDependency {
+        coordinate: coordinate.to_string(),
+        version: version.to_string(),
+        scope: scope.to_string(),
     }
 }
 
@@ -280,6 +289,82 @@ fn circular_dependency_does_not_infinite_loop() {
         .find(|n| n.coordinate == "com.example:a")
         .unwrap();
     assert_eq!(node_a.requests.len(), 2);
+}
+
+#[test]
+fn test_scoped_transitive_never_becomes_a_candidate() {
+    let modules = vec![module("core", vec![dep_explicit("com.example:a", "1.0")])];
+    let provider = FixturePomProvider::new()
+        .with_pom(
+            "com.example:a",
+            "1.0",
+            vec![pom_dep_with_scope("com.example:b", "2.0", "test")],
+        )
+        .with_pom("com.example:b", "2.0", vec![]);
+
+    let graph =
+        build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider).expect("should build");
+
+    assert_eq!(graph.candidates.len(), 1);
+    assert!(graph
+        .candidates
+        .values()
+        .all(|n| n.coordinate != "com.example:b"));
+}
+
+#[test]
+fn provided_scoped_transitive_never_becomes_a_candidate() {
+    let modules = vec![module("core", vec![dep_explicit("com.example:a", "1.0")])];
+    let provider = FixturePomProvider::new().with_pom(
+        "com.example:a",
+        "1.0",
+        vec![pom_dep_with_scope("com.example:b", "2.0", "provided")],
+    );
+
+    let graph =
+        build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider).expect("should build");
+
+    assert_eq!(graph.candidates.len(), 1);
+}
+
+#[test]
+fn system_scoped_transitive_never_becomes_a_candidate() {
+    let modules = vec![module("core", vec![dep_explicit("com.example:a", "1.0")])];
+    let provider = FixturePomProvider::new().with_pom(
+        "com.example:a",
+        "1.0",
+        vec![pom_dep_with_scope("com.example:b", "2.0", "system")],
+    );
+
+    let graph =
+        build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider).expect("should build");
+
+    assert_eq!(graph.candidates.len(), 1);
+}
+
+#[test]
+fn compile_and_runtime_and_default_scoped_transitives_still_propagate() {
+    for scope in ["compile", "runtime", ""] {
+        let modules = vec![module("core", vec![dep_explicit("com.example:a", "1.0")])];
+        let provider = FixturePomProvider::new()
+            .with_pom(
+                "com.example:a",
+                "1.0",
+                vec![pom_dep_with_scope("com.example:b", "2.0", scope)],
+            )
+            .with_pom("com.example:b", "2.0", vec![]);
+
+        let graph = build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider)
+            .unwrap_or_else(|_| panic!("should build with scope {scope:?}"));
+
+        assert!(
+            graph
+                .candidates
+                .values()
+                .any(|n| n.coordinate == "com.example:b"),
+            "scope {scope:?} should propagate transitively"
+        );
+    }
 }
 
 #[test]

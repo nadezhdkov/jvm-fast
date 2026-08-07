@@ -169,6 +169,7 @@ fn on_close(
                 Some((Section::Plain, _)) => dependencies.push(PomDependency {
                     coordinate: accumulator.coordinate(),
                     version: accumulator.version.clone(),
+                    scope: accumulator.scope.clone(),
                 }),
                 Some((Section::Managed, _)) => managed_dependencies.push(ManagedDependencyEntry {
                     coordinate: accumulator.coordinate(),

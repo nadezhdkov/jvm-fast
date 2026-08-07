@@ -50,6 +50,7 @@ fn pom_dep(coordinate: &str, version: &str) -> PomDependency {
     PomDependency {
         coordinate: coordinate.to_string(),
         version: version.to_string(),
+        scope: String::new(),
     }
 }
 

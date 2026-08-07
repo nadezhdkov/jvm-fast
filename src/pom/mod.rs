@@ -16,6 +16,13 @@ pub use xml::parse_pom_xml;
 pub struct PomDependency {
     pub coordinate: String,
     pub version: String,
+    /// `<scope>` cru do XML — string vazia é o default do Maven
+    /// (`compile`), nunca tratada como "sem escopo"/ausente. Interpretação
+    /// de quais escopos propagam transitivamente vive em
+    /// `graph::build_graph` (`compile`/`runtime`/vazio propagam;
+    /// `test`/`provided`/`system` não — seção 6.2), não aqui: este tipo só
+    /// espelha o XML, sem embutir regra de resolução.
+    pub scope: String,
 }
 
 /// Uma entrada de `<dependencyManagement>` já interpretada.

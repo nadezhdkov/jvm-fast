@@ -18,12 +18,29 @@ fn parses_plain_dependencies() {
     assert_eq!(pom.dependencies.len(), 2);
     assert_eq!(pom.dependencies[0].coordinate, "org.slf4j:slf4j-api");
     assert_eq!(pom.dependencies[0].version, "2.0.13");
+    assert_eq!(pom.dependencies[0].scope, "compile");
     assert_eq!(
         pom.dependencies[1].coordinate,
         "com.fasterxml.jackson.core:jackson-core"
     );
     assert_eq!(pom.dependencies[1].version, "2.17.0");
+    assert_eq!(
+        pom.dependencies[1].scope, "",
+        "no <scope> tag means the Maven default, an empty string here — never fabricated as \"compile\""
+    );
     assert!(pom.managed_dependencies.is_empty());
+}
+
+#[test]
+fn parses_test_scoped_dependency() {
+    let pom = parse_pom_xml(&fixture("test_scoped_dependency.xml")).expect("should parse");
+
+    assert_eq!(pom.dependencies.len(), 1);
+    assert_eq!(
+        pom.dependencies[0].coordinate,
+        "org.junit.jupiter:junit-jupiter"
+    );
+    assert_eq!(pom.dependencies[0].scope, "test");
 }
 
 #[test]

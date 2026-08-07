@@ -127,6 +127,9 @@ pub fn build_graph<P: PomProvider>(
         if expanded.insert((item.coordinate.clone(), item.version.clone())) {
             let pom = fetch_pom(provider, &item.coordinate, &item.version)?;
             for transitive in pom.dependencies {
+                if !propagates_transitively(&transitive.scope) {
+                    continue;
+                }
                 queue.push_back(QueueItem {
                     from: to,
                     parent_coordinate: Some(item.coordinate.clone()),
@@ -145,6 +148,20 @@ pub fn build_graph<P: PomProvider>(
         edges,
         module_roots,
     })
+}
+
+/// Só `compile`/`runtime` (e o default do Maven, string vazia, que
+/// significa `compile`) propagam transitivamente — `test`/`provided`/
+/// `system` param aqui: quem declara a dependência os usa diretamente, mas
+/// eles nunca viram dependência de quem depende dessa dependência (seção
+/// 6.2, semântica real do Maven). Antes desta checagem, `build_graph`
+/// tratava todo `<dependency>` de um POM buscado como transitiva de
+/// verdade, o que vazava, por exemplo, dependências `test`-scoped de
+/// terceiros pro grafo do projeto — descoberto testando `jvmfast test`
+/// contra o Maven Central real (`org.assertj:assertj-core` como
+/// `[dev-dependencies]`).
+fn propagates_transitively(scope: &str) -> bool {
+    matches!(scope, "" | "compile" | "runtime")
 }
 
 fn resolve_declared_version(

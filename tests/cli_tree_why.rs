@@ -30,6 +30,7 @@ impl FixturePomProvider {
                     .map(|(c, v)| PomDependency {
                         coordinate: c.to_string(),
                         version: v.to_string(),
+                        scope: String::new(),
                     })
                     .collect(),
                 managed_dependencies: Vec::new(),
