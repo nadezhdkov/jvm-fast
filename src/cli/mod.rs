@@ -24,6 +24,7 @@ pub use build::run as build;
 pub use edit::{add_dependency, remove_dependency, ManifestEditError};
 pub use error::CliError;
 pub use import::run as import_pom;
+pub use import::run_gradle as import_gradle;
 pub use install::{add, install, remove, InstallSummary};
 pub use jdk::{
     ensure_project_jdk, install_jdk, list as list_jdks, resolve_project_java_version, use_jdk,
@@ -103,6 +104,12 @@ pub enum Command {
     ImportPom {
         /// Caminho do pom.xml a importar; default: `pom.xml` na raiz do projeto.
         pom: Option<String>,
+    },
+    /// Gera project.toml a partir de um projeto Gradle existente, via a
+    /// Tooling API (seção 10).
+    ImportGradle {
+        /// Diretório do projeto Gradle a importar; default: raiz do projeto atual.
+        project: Option<String>,
     },
     /// Gerenciamento de JDK — instala/lista distribuições Temurin (seção 7).
     Jdk {
@@ -202,6 +209,7 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
             action: JdkCommand::Use { version },
         } => jdk::use_jdk(&version),
         Command::ImportPom { pom } => import::run(root, pom),
+        Command::ImportGradle { project } => import::run_gradle(root, project),
     }
 }
 

@@ -30,6 +30,12 @@
 - NEVER let `tests/cli_test.rs` mock the JUnit Platform Console Standalone download — it is the
   one other intentional exception, since `jvmfast test` always fetches it from Maven Central for
   real
+- NEVER let `tests/gradleimport.rs`, `tests/cli_import_gradle.rs`, or `gradle-bridge`'s own
+  `JvmfastModelBuilderTest` mock the Gradle Tooling API connection or its dependency resolution —
+  another intentional exception: `jvmfast import-gradle`'s entire mechanism *is* a real Tooling
+  API connection to a real `gradlew` resolving real dependencies from real Maven Central
+  (`tests/fixtures/gradle/simple-project/`, its own committed wrapper), so faking any part of it
+  would test nothing real
 - PREFER fixtures (synthetic manifests/POMs) over real network access in every other test — see
   `docs/CONVENTIONS.md`
 - ALWAYS keep `GraphEdge` (topology) and `ResolvedNode` (resolution state) as separate structs,

@@ -6,6 +6,8 @@ pub mod config;
 pub mod domain;
 pub mod download;
 pub mod exclusion;
+pub mod gradlebridge;
+pub mod gradleimport;
 pub mod graph;
 pub mod import;
 pub mod jdk;

@@ -6,6 +6,8 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "build.rs"
+      - "gradle-bridge/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/rust.yml"
@@ -13,6 +15,8 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "build.rs"
+      - "gradle-bridge/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/rust.yml"
@@ -27,8 +31,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # `tests/build.rs`/`tests/cli_build.rs` (Fase 3, seção 8) shell out to
-      # a real `javac`/`java` — GitHub's ubuntu-latest image ships JDKs but
+      # Needed twice over: `tests/build.rs`/`tests/cli_build.rs` (Fase 3,
+      # seção 8) shell out to a real `javac`/`java`, and `build.rs` itself
+      # (Fase 4, gradle-bridge embedding) shells out to `gradle-bridge/gradlew`,
+      # which needs a JDK to run. GitHub's ubuntu-latest image ships JDKs but
       # doesn't put them on PATH without this step.
       - uses: actions/setup-java@v4
         with:

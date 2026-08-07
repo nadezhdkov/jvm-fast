@@ -41,6 +41,9 @@ pub enum CliError {
     #[error(transparent)]
     Import(#[from] crate::import::ImportError),
 
+    #[error(transparent)]
+    GradleImport(#[from] crate::gradleimport::GradleImportError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 

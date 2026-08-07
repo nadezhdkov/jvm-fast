@@ -38,10 +38,13 @@ every change. Contributions that do not follow the project's AI policy will be c
 
 ## Setup
 
-[Rust](https://rustup.rs/) (stable toolchain) is required to build jvm-fast. From Phase 3 onward,
-a real JDK installed and on the `PATH` (`javac`/`java`) is also required, since
-`tests/build.rs`/`tests/cli_build.rs`/`tests/run.rs`/`tests/cli_run.rs`/`tests/cli_test.rs` invoke
-the real compiler and JVM rather than a mock.
+[Rust](https://rustup.rs/) (stable toolchain) is required to build jvm-fast. A real JDK installed
+and on the `PATH` (`javac`/`java`, any JDK 17+) is also required — from Phase 3 onward for
+`cargo test` (`tests/build.rs`/`tests/cli_build.rs`/`tests/run.rs`/`tests/cli_run.rs`/
+`tests/cli_test.rs` invoke the real compiler and JVM rather than a mock), and since Fase 4, for
+`cargo build` itself too: [`build.rs`](build.rs) builds [`gradle-bridge/`](gradle-bridge/) (a real
+Gradle project) and embeds the resulting jar into the `jvmfast` binary, which needs a JDK to run
+`./gradlew` — see the `gradle-bridge` section below.
 
 ```shell
 git clone https://github.com/nadezhdkov/jvm-fast.git
@@ -140,7 +143,11 @@ so `cargo-depgraph` and friends have nothing to visualize right now.
 [`gradle-bridge/`](gradle-bridge/) is the one non-Rust, non-Cargo component in the repo — a
 standalone Gradle project (own `build.gradle.kts`, own `gradlew`, own CI job) backing `jvmfast
 import-gradle` (see [`gradle-bridge/README.md`](gradle-bridge/README.md) and CLAUDE.md's Fase 4
-writeup). `cargo build`/`cargo test` never touch it — build and test it independently:
+writeup). Unlike a typical "separate subproject," `cargo build` at the repo root *does* touch
+it now: [`build.rs`](build.rs) shells out to `./gradlew shadowJar` here and embeds the result
+into the `jvmfast` binary, so a JDK on `PATH` is required for `cargo build` itself, not just
+`cargo test`. To build/test `gradle-bridge/` on its own (its own test suite, independent of the
+Rust side):
 
 ```shell
 cd gradle-bridge

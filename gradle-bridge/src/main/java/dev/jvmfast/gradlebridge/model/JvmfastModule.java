@@ -14,5 +14,14 @@ import java.util.List;
 public interface JvmfastModule extends Serializable {
     String getName();
 
+    /**
+     * {@code project.getVersion()} as a string — Gradle's own default for
+     * an unset project version ({@code "unspecified"}) is passed through
+     * as-is; deciding what to substitute for it is the Rust-side driver's
+     * job (it writes {@code project.toml}, this model only reports what
+     * Gradle resolved).
+     */
+    String getVersion();
+
     List<JvmfastDependency> getDependencies();
 }

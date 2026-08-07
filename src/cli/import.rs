@@ -1,5 +1,7 @@
 use super::error::CliError;
-use crate::import::import_pom as import_pom_impl;
+use crate::cli::context::cache_root;
+use crate::gradleimport::import_gradle as import_gradle_impl;
+use crate::import::{import_pom as import_pom_impl, ImportReport};
 use std::path::Path;
 
 /// Wires `jvmfast import-pom` (docs/architecture.md seção 10): reads
@@ -14,10 +16,36 @@ pub fn run(root: &Path, pom: Option<String>) -> Result<String, CliError> {
     let manifest_path = root.join("project.toml");
 
     let report = import_pom_impl(&pom_path, &manifest_path)?;
+    Ok(format_summary(
+        &format!("project.toml written from {}", pom_path.display()),
+        &report,
+    ))
+}
 
-    let mut summary = format!("project.toml written from {}", pom_path.display());
+/// Wires `jvmfast import-gradle` (docs/architecture.md seção 10): reads
+/// `project` (defaults to the current project root) through the Gradle
+/// Tooling API bridge (`crate::gradleimport`) and writes `project.toml` at
+/// the root — never touches the source Gradle build files, and never
+/// overwrites an existing `project.toml`
+/// (`GradleImportError::ManifestAlreadyExists`).
+pub fn run_gradle(root: &Path, project: Option<String>) -> Result<String, CliError> {
+    let project_dir = match project {
+        Some(path) => Path::new(&path).to_path_buf(),
+        None => root.to_path_buf(),
+    };
+    let manifest_path = root.join("project.toml");
+
+    let report = import_gradle_impl(&project_dir, &manifest_path, &cache_root())?;
+    Ok(format_summary(
+        &format!("project.toml written from {}", project_dir.display()),
+        &report,
+    ))
+}
+
+fn format_summary(header: &str, report: &ImportReport) -> String {
+    let mut summary = header.to_string();
     if report.notes.is_empty() {
-        return Ok(summary);
+        return summary;
     }
     summary.push_str(&format!(
         "\n{} item(s) need manual attention:",
@@ -26,5 +54,5 @@ pub fn run(root: &Path, pom: Option<String>) -> Result<String, CliError> {
     for note in &report.notes {
         summary.push_str(&format!("\n  - {note}"));
     }
-    Ok(summary)
+    summary
 }

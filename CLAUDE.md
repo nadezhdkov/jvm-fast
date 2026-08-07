@@ -36,7 +36,7 @@ artifacts actually publish — see "Known, deliberate gaps inside Fase 1"
 below for the full writeup), and `graph::build_graph` not filtering POM
 dependencies by `<scope>` is **also fixed** (test/provided/system-scoped
 transitives no longer leak into the graph as if compile-scoped — same
-section below). **Fase 4 (interop, seção 10) has started**: `jvmfast
+section below). **Fase 4 (interop, seção 10) is complete**: `jvmfast
 import-pom [pom.xml] [-o project.toml]` reads an existing `pom.xml` and
 writes an equivalent `project.toml`, never touching the source `pom.xml`
 and never overwriting an existing manifest
@@ -61,25 +61,43 @@ equivalent — `provided`/`system`-scoped dependencies, unresolved
 properties, `<profiles>`, `<build><plugins>`, repositories beyond the
 first — is skipped from the generated manifest and surfaced as a report
 note instead of silently dropped or guessed. `jvmfast import-gradle`
-(Tooling API bridge, seção 10) has its JVM-side skeleton started —
-[`gradle-bridge/`](gradle-bridge/) is a standalone Gradle project
-(own build, own `gradlew`, own CI job) with a
-`JvmfastModelBuilderPlugin`/`JvmfastModelBuilder` that registers against a
-target build's `ToolingModelBuilderRegistry`, plus the
-`JvmfastDependencyModel`/`JvmfastModule`/`JvmfastDependency` typed model
-shape — but nothing resolves real dependencies yet
-(`JvmfastModelBuilder.buildAll` throws `UnsupportedOperationException`)
-and nothing on the Rust side invokes it (no init-script generation, no
-driver, no `jvmfast import-gradle` CLI command). See the Fase 4 writeup
-below for the full breakdown. `docs/architecture.md` seção 10 and the
-roadmap below are the spec to implement the rest against. See "Roadmap"
-below for the specific gaps left
-inside Fase 1 (targeted `update <coord>`, `add` without an explicit
-version, editing `[dev-dependencies]` from the CLI, multi-repository
-fallback, per-host download throttling), Fase 2 (exact-version JDK
-install, listing *available* (not just installed) JDKs, and global
-`config.toml` beyond `[defaults]`), and Fase 3 (see below) — each is a
-typed, rejected-not-faked error today, not silent scope creep.
+(Tooling API bridge, seção 10) is implemented end to end too, against a
+real Gradle build via a real Tooling API connection: [`gradle-bridge/`](gradle-bridge/)
+(a standalone Gradle project — own build, own `gradlew`, own CI job) now
+ships `JvmfastModelBuilder.buildAll` walking `project.getConfigurations()`
+(`compileClasspath`/`runtimeClasspath`/`testCompileClasspath`) into a real
+`JvmfastDependencyModel`, plus a `Main` class (the Tooling API
+*client*-side driver, `dev.jvmfast.gradlebridge.Main`) that opens a real
+`GradleConnector` connection to the target project and prints the
+resolved model as JSON on its own stdout — never `gradlew`'s, per seção
+10's explicit rejection of stdout-text-parsing. `build.rs` builds that jar
+(as a `shadowJar`, since the client-side driver needs its own bundled copy
+of `gradle-tooling-api`) and embeds it into the `jvmfast` binary
+(`src/gradlebridge::extract_bridge_jar` gets it onto disk at runtime,
+content-addressed like any other cached artifact); `src/gradleimport/`
+generates the init-script (seção 10 step 1), invokes the extracted jar as
+a `java -jar` subprocess, parses its JSON stdout, and writes an equivalent
+`project.toml` — `[dependencies]` from `compileClasspath`/`runtimeClasspath`,
+`[dev-dependencies]` from whatever `testCompileClasspath` adds beyond
+that, `java-version` defaulted to `"lts"` (not exposed by the model yet),
+and always a report note about seção 10's documented mediation-divergence
+risk (Gradle resolves highest-version-wins; `jvmfast update` afterward
+uses jvm-fast's own nearest-depth-wins and may pick different versions).
+Verified against a real Gradle 9.6.1 build resolving real dependencies
+from real Maven Central (`tests/fixtures/gradle/simple-project/`, its own
+committed `gradlew`) — the same deliberate, narrow network/real-tool
+exception this repo already makes for `build`/`run`/`test`'s real
+JDK and `test`'s real-Maven-Central console-jar download. See the Fase 4
+writeup below for the full breakdown. See "Roadmap" below for the
+specific gaps left inside Fase 1 (targeted `update <coord>`, `add`
+without an explicit version, editing `[dev-dependencies]` from the CLI,
+multi-repository fallback, per-host download throttling), Fase 2
+(exact-version JDK install, listing *available* (not just installed)
+JDKs, and global `config.toml` beyond `[defaults]`), Fase 3 (see below),
+and Fase 4 (multi-project Gradle builds, `java-version` extraction from
+Gradle, and `import-pom`'s parent-POM-inheritance gap) — each is a typed,
+rejected-not-faked error or a documented report note today, not silent
+scope creep.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -108,13 +126,16 @@ typed, rejected-not-faked error today, not silent scope creep.
 
 ## Build, test, lint
 
-- `cargo build` — build the `jvmfast` binary
+- `cargo build` — build the `jvmfast` binary. **Requires a JDK on `PATH`
+  and network access** since Fase 4: `build.rs` builds
+  [`gradle-bridge/`](gradle-bridge/) (`./gradlew shadowJar`) and embeds
+  the resulting jar into the binary via `include_bytes!` — see the Fase 4
+  writeup below.
 - `cargo test` — run all tests (integration tests for manifest parsing live
   in `tests/manifest_parsing.rs`, using fixtures under `tests/fixtures/`).
   **Requires a real `javac`/`java` on `PATH`** since `tests/build.rs`/
-  `tests/cli_build.rs` (Fase 3) shell out to the system JDK, not a mock —
-  the only test suite in this repo with that dependency; CI installs one
-  via `actions/setup-java` (see `.github/workflows/rust.yml`)
+  `tests/cli_build.rs` (Fase 3) shell out to the system JDK, not a mock;
+  CI installs one via `actions/setup-java` (see `.github/workflows/rust.yml`)
 - `cargo test <name>` — run a single test by name substring (e.g. `cargo
   test bom_managed_dependency`)
 - `cargo clippy --all-targets -- -D warnings` — lint; CI fails on any
@@ -356,8 +377,8 @@ typed, rejected-not-faked error today, not silent scope creep.
   resolution itself is exercised by the same mock-server-backed pattern
   `cli::install` already uses, not duplicated here).
 
-**Fase 4 (interop, seção 10) — `import-pom` implemented, `import-gradle`
-JVM-side skeleton started**:
+**Fase 4 (interop, seção 10) — complete: `import-pom` and `import-gradle`
+both implemented end to end**:
 
 - `src/pom/xml.rs` — extended (not rewritten) to also capture
   `<project><artifactId>`/`<version>` (direct only, no `<parent>`
@@ -437,49 +458,208 @@ JVM-side skeleton started**:
   range-translation boundary and `tests/cli_import.rs` for the CLI wiring
   (default path, explicit path, already-exists rejection, report
   formatting).
-- [`gradle-bridge/`](gradle-bridge/) (new, non-Rust, standalone Gradle
+- [`gradle-bridge/`](gradle-bridge/) (non-Rust, standalone Gradle
   project — own `build.gradle.kts`, own `gradlew`, own CI job at
   `.github/workflows/gradle-bridge.yml` triggered only on changes under
-  this directory) — the JVM-side skeleton for `jvmfast import-gradle`
-  (Tooling API bridge, seção 10). Contains:
+  this directory) — the full JVM-side implementation of `jvmfast
+  import-gradle` (Tooling API bridge, seção 10), server side *and* client
+  side in the same jar. Contains:
   - `dev.jvmfast.gradlebridge.model.{JvmfastDependencyModel,JvmfastModule,JvmfastDependency}`
-    — the typed model shape both sides of the Tooling API exchange (the
-    plugin running inside the target build, and jvmfast's own driver on
-    the client side, not implemented yet) are meant to agree on. Plain
-    `Serializable` interfaces, no implementation classes yet since nothing
-    constructs real instances.
-  - `JvmfastModelBuilderPlugin` — a `Plugin<Project>` that takes a
-    `ToolingModelBuilderRegistry` via constructor injection (Gradle
-    provides it; the plugin never looks it up from `project` itself) and
-    registers `JvmfastModelBuilder` against it — this is the class the
-    init-script jvmfast will generate (seção 10 step 1) is meant to apply.
-  - `JvmfastModelBuilder` — implements `ToolingModelBuilder`;
-    `canBuild` recognizes `JvmfastDependencyModel`'s class name;
-    `buildAll` throws `UnsupportedOperationException` rather than a
-    fabricated/empty model — walking `project.getConfigurations()` to
-    populate a real one is deliberately deferred (see gaps below).
-  - Deliberately **not** in this pass, per the "escopo reduzido" scope
-    agreed before starting: init-script generation, the Tooling API
-    *client*-side connection code (`GradleConnector.forProjectDirectory`,
-    requesting the model, JSON serialization — none of `gradle-tooling-api`
-    is even a dependency yet, only `gradleApi()` for the plugin/model-
-    builder side), any Rust-side invocation, and `jvmfast import-gradle`
-    as a CLI command. This is real, tested infrastructure for one half of
-    the mechanism (the plugin/model side), not a stub — but only half.
+    — the typed model shape both sides of the Tooling API exchange agree
+    on, now with real `Default*` `Serializable` implementation classes
+    (`DefaultJvmfastDependencyModel`/`DefaultJvmfastModule`/`DefaultJvmfastDependency`)
+    alongside the interfaces. `JvmfastModule` gained `getVersion()`
+    (`project.getVersion()` as a string, including Gradle's own
+    `"unspecified"` default when unset) — needed to fill
+    `project.toml`'s `[project].version`, which the original interfaces
+    (JVM-side skeleton milestone) didn't carry.
+  - `JvmfastModelBuilderPlugin` — unchanged from the skeleton: a
+    `Plugin<Project>` taking `ToolingModelBuilderRegistry` via
+    constructor injection and registering `JvmfastModelBuilder` against
+    it, applied by the init-script `src/gradleimport/` generates (seção
+    10 step 1).
+  - `JvmfastModelBuilder.buildAll` — **now real**, not a stub: for each of
+    `compileClasspath`/`runtimeClasspath`/`testCompileClasspath` (skipped
+    silently if the configuration doesn't exist, e.g. no `java` plugin
+    applied — never an error), reads `configuration.getIncoming()
+    .getResolutionResult().getAllComponents()` — the whole resolved
+    dependency graph, direct + transitive, already flattened and
+    deduplicated by Gradle itself — and reports each component's
+    `group:artifact`, version, and originating configuration as a
+    `JvmfastDependency`. Deliberately uses `ResolutionResult` (metadata
+    only) rather than `ResolvedConfiguration.getResolvedArtifacts()`,
+    which would force actual jar-file resolution for no benefit here.
+    Project dependencies (other subprojects, no `ModuleVersionIdentifier`)
+    are skipped — multi-project graphs stay Fase 5 scope.
+  - `Main` (new) — the Tooling API **client**-side driver (seção 10 steps
+    2-4), invoked by `src/gradleimport/` as `java -jar
+    jvmfast-gradle-bridge.jar <project-dir> <init-script-path>`. Opens a
+    real `GradleConnector.newConnector().forProjectDirectory(...).connect()`,
+    requests `JvmfastDependencyModel` with `--init-script
+    <init-script-path>`, redirects the target build's own console output
+    to *this* process's stderr (`setStandardOutput`/`setStandardError`,
+    discardable, never mixed into the result channel), and prints a
+    hand-rolled JSON serialization of the model to its own stdout —
+    `Main.toJson`, no Gson/Jackson dependency, since the model is a small
+    fixed shape of strings/lists and adding a JSON library would be one
+    more thing to shade into the client jar for no real benefit. `Main`
+    exits non-zero with a message on stderr for `BuildException`
+    (`gradlew`-side build failure) and `GradleConnectionException`
+    (couldn't connect at all) separately, so `src/gradleimport/` can
+    distinguish them.
   - No Gradle toolchain auto-provisioning (`java.toolchain {}`) —
     `sourceCompatibility`/`targetCompatibility` are pinned to 17 instead,
     since toolchain auto-download needs network access to a toolchain
     repository that isn't guaranteed available; whatever JDK invokes
     `./gradlew` compiles it directly.
-  - Tested with plain JUnit 5 — `JvmfastModelBuilderTest` (canBuild/
-    buildAll-throws) needs no Gradle project context at all;
-    `JvmfastModelBuilderPluginTest` verifies registration against a
-    hand-written fake `ToolingModelBuilderRegistry` (recording what got
-    registered) rather than a real Gradle `Project` via `ProjectBuilder` —
-    the plugin never dereferences its `Project` argument, so a real
-    project fixture would test nothing extra here. Verified building/
-    testing for real with the Gradle 9.6.1 installed in this environment
-    (`./gradlew build`), not just written and assumed to compile.
+  - `build.gradle.kts` gained: the `com.gradleup.shadow` plugin (`9.6.1`,
+    matching the wrapper version — the actively-maintained fork of the
+    stalled `com.github.johnrengelman.shadow`), `implementation("org.gradle:gradle-tooling-api:9.6.1")`
+    (pulled from `repo.gradle.org/gradle/libs-releases`, since current
+    `gradle-tooling-api` releases stopped publishing to Maven Central a
+    while back — its Central metadata tops out at an old 7.x snapshot),
+    and `runtimeOnly("org.slf4j:slf4j-nop:2.0.16")` (silences the Tooling
+    API's "no SLF4J providers found" warning without pulling in a real
+    logging backend). `tasks.shadowJar` sets `archiveClassifier = "all"`
+    and the `Main-Class` manifest attribute — classified `-all` (rather
+    than reusing the plain `jar` task's output filename) specifically so
+    the two never collide on disk when both get built in the same
+    checkout (`assemble`, and therefore `./gradlew build`, already runs
+    both by default — the shadow plugin wires `shadowJar` into `assemble`
+    on its own). Bundling `gradle-tooling-api` into the shaded jar never
+    conflicts with the plugin/model classes' `compileOnly(gradleApi())`
+    above: the two run in entirely separate JVM invocations (the target
+    build's own classloader vs. this bridge's own `java -jar` client
+    process), never on the same classpath at once.
+  - `tasks.test` gained `jvmArgs("--add-opens", "java.base/java.lang=ALL-UNNAMED")`
+    — `ProjectBuilder` (now used by real `JvmfastModelBuilderTest` cases)
+    injects synthetic classes into its classloader reflectively at
+    project-creation time, which JDK 17+'s module system blocks without
+    this; a known, documented requirement for Gradle's own test fixtures
+    on JDK 17+, not specific to this project.
+  - Tests: `JvmfastModelBuilderTest` now covers a real empty-model case
+    (`ProjectBuilder` project with no `java` plugin → one module, zero
+    dependencies) and a real dependency-resolution case (`ProjectBuilder`
+    project with `java` applied, `mavenCentral()`, an `implementation` and
+    a `testImplementation` real coordinate — asserts the resolved model
+    reports them under the right configurations with the right versions).
+    The latter is a deliberate, narrow real-network exception (same
+    category as `tests/cli_test.rs`'s real-Maven-Central console-jar
+    download on the Rust side) — unavoidable since `buildAll`'s entire
+    job is walking a *resolved* configuration, and this project's test
+    suite already needs network to resolve its own JUnit dependencies to
+    run at all. `MainTest` covers `Main.toJson`'s shape (including the
+    empty-dependencies case and quote/backslash escaping) with no network
+    needed. `JvmfastModelBuilderPluginTest` is unchanged from the
+    skeleton. Verified end to end by hand too, outside the test suite:
+    `java -jar build/libs/jvmfast-gradle-bridge-0.1.0-all.jar <dir>
+    <init-script>` against a real throwaway Gradle 9.6.1 project produces
+    exactly the expected JSON on a *pure* stdout stream (verified by
+    redirecting stdout and stderr to separate files and validating the
+    stdout file parses as JSON on its own).
+- [`build.rs`](build.rs) — resolves the "how does
+  `jvmfast-gradle-bridge.jar` reach the end user" distribution question
+  (seção 10: "um helper JVM empacotado com o jvmfast"): every `cargo
+  build` shells out to `gradle-bridge/gradlew shadowJar` first (not plain
+  `jar` — the embedded jar doubles as the Tooling API client driver, which
+  needs `gradle-tooling-api` actually present on the classpath at
+  runtime, unlike the plugin/model classes; rerunning only when
+  `gradle-bridge/src`, `build.gradle.kts`, or `settings.gradle.kts`
+  change, via `cargo:rerun-if-changed`) and embeds the resulting
+  `*-all.jar`'s bytes straight into the `jvmfast` binary with
+  `include_bytes!` — no runtime download, no separate release-asset
+  channel to maintain. This is a real, deliberate cost: `cargo build`
+  (not just `cargo test`, which already needed a JDK for Fase 3's
+  `javac`/`java`-shelling tests) now requires a JDK on `PATH` plus
+  whatever network access Gradle's own wrapper bootstrap needs on first
+  run — accepted in exchange for the bridge having zero runtime network
+  dependency of its own. `.github/workflows/rust.yml` also triggers on
+  `build.rs`/`gradle-bridge/**` changes now, since `cargo build` depends
+  on that directory.
+- `src/gradlebridge/` — `extract_bridge_jar(cache_root)` writes the
+  embedded jar to `<cache_root>/artifacts/sha256/...` via the same
+  `CacheStore::write_artifact` (seção 5.1: temp file → verify checksum →
+  atomic rename) every other cached artifact already goes through, keyed
+  by the embedded bytes' own SHA-256 — so a rebuilt bridge jar with
+  different bytes never collides with a stale extracted copy, and
+  extraction is idempotent/safe to call on every `jvmfast import-gradle`
+  invocation. Now actually called, by `src/gradleimport/` below. Tested
+  (`tests/gradlebridge.rs`) against the real embedded jar (checks the
+  "PK" zip magic bytes and idempotent re-extraction).
+- `src/gradleimport/` (new) — `import_gradle(project_dir, manifest_path,
+  cache_root)`, the `import-gradle` counterpart to `crate::import::import_pom`.
+  Refuses to run if `manifest_path` already exists
+  (`GradleImportError::ManifestAlreadyExists`) or if `project_dir` has no
+  `gradlew`/`gradlew.bat` (`GradlewNotFound` — the Tooling API still needs
+  a real Gradle distribution to connect to, seção 10's own documented
+  limitation; jvmfast only avoids needing to understand *which* version).
+  Flow: `gradlebridge::extract_bridge_jar` gets the bridge jar onto disk,
+  `initscript::write_init_script` writes a temporary Groovy init-script
+  (`initscript { dependencies { classpath(files(...)) } }` +
+  `allprojects { apply plugin: ... }`, one instance per invocation via a
+  process-wide `AtomicU64` counter added to the filename — plain
+  `process::id()` alone isn't unique enough across concurrent invocations
+  in the same process, e.g. parallel `cargo test` threads, and collided in
+  testing before the counter was added), then `java -jar <bridge_jar>
+  <project_dir> <init_script>` runs as a real subprocess and its stdout is
+  parsed as `model::BridgeModel` (serde, mirrors `Main.toJson`'s shape
+  exactly) via `serde_json`. A non-zero exit becomes
+  `GradleImportError::BridgeFailed { status, stderr }`; unparseable stdout
+  becomes `InvalidBridgeOutput`. Mapping onto `project.toml` (reusing
+  `crate::import::render_manifest`, now `pub` from `src/import/` for this
+  reason): dependencies from `compileClasspath`/`runtimeClasspath` become
+  `[dependencies]` (deduplicated by coordinate); whatever
+  `testCompileClasspath` adds *beyond* that set becomes
+  `[dev-dependencies]` (since `testImplementation` extends
+  `implementation` in a typical Gradle build, `testCompileClasspath` is
+  usually a superset — only the genuinely test-only additions belong in
+  dev-dependencies); `java-version` is always defaulted to `"lts"` with a
+  report note, since `JvmfastDependencyModel` doesn't expose Gradle's
+  configured Java version yet; a project with no version set
+  (`"unspecified"`) is defaulted to `"0.1.0"` with a note; a report note
+  about seção 10's documented mediation-divergence risk
+  (Gradle=highest-version-wins vs. jvm-fast=nearest-depth-wins, seção 6.2)
+  is always included, unconditionally, per seção 10's explicit ask
+  ("vale documentar isso explicitamente para o usuário"); a note about no
+  `[repositories]` being generated (jvm-fast defaults to Maven Central) is
+  always included too. A multi-module Gradle result (more than one
+  `JvmfastModule`, not producible by the current single-project-only
+  `buildAll` but defensively handled) imports only the first, with a note
+  — Fase 5 scope.
+- `src/cli/import.rs` — now wires both `jvmfast import-pom [pom] [-o
+  path]` and `jvmfast import-gradle [project]` (`project` defaults to the
+  CLI's own project root — mirrors `import-pom`'s `pom: None` defaulting
+  to `<root>/pom.xml`). Both share a `format_summary` helper for the
+  one-line-per-note report output.
+- `src/cli/error.rs` — `CliError::Import(#[from] ImportError)` and the new
+  `CliError::GradleImport(#[from] GradleImportError)`.
+- Tested with fixture-only POMs for `import-pom` (`tests/fixtures/import/`,
+  `tests/fixtures/poms/import_metadata.xml`) — no real network, no real
+  Maven Central, consistent with every other parsing-layer test in this
+  repo; a `full_pom.xml` fixture exercises every conversion path (plain/
+  interpolated/BOM-managed/pinned-range dependency versions,
+  provided-scope skip, unresolved-property skip, unresolved-range skip,
+  exclusions, dev-dependencies, BOM import, multiple repositories,
+  profiles/plugins detection) in one integration test
+  (`tests/import.rs`), plus dedicated `tests/import_range.rs` for the
+  range-translation boundary and `tests/cli_import.rs` for the CLI wiring
+  (default path, explicit path, already-exists rejection, report
+  formatting). `import-gradle`, by contrast, is tested against a real,
+  committed Gradle project fixture
+  (`tests/fixtures/gradle/simple-project/` — its own `settings.gradle.kts`/
+  `build.gradle.kts` declaring a real `implementation`/`testImplementation`
+  pair, plus its own committed `gradlew`/`gradle-wrapper.jar`, copied from
+  `gradle-bridge/`'s own wrapper so both pin the same Gradle 9.6.1): this
+  is a deliberate, narrow real-network/real-subprocess exception (same
+  category as `build`/`run`/`test`'s real JDK and `test`'s real-Maven-
+  Central console-jar download) — `import-gradle`'s entire mechanism *is*
+  a real Tooling API connection, so there's no meaningful way to fake it
+  without testing nothing real. `tests/gradleimport.rs` exercises
+  `gradleimport::import_gradle` directly (generated manifest content,
+  dependency/dev-dependency split, report notes, `ManifestAlreadyExists`,
+  `GradlewNotFound`); `tests/cli_import_gradle.rs` exercises the CLI
+  wiring layer (explicit `project` path, defaulted path, already-exists
+  rejection) the same way `tests/cli_import.rs` does for `import-pom`.
 
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
@@ -644,26 +824,33 @@ shortcuts):
 
 **Known, deliberate gaps inside Fase 4 so far**:
 
-- `jvmfast import-gradle` as a command doesn't exist yet — only
-  `gradle-bridge/`'s plugin/model-builder registration skeleton does (see
-  the writeup above). Still entirely unimplemented: init-script
-  generation, the Tooling API client-side connection
-  (`GradleConnector`/`ProjectConnection`, not even a dependency on
-  `gradle-tooling-api` yet), JSON serialization of the model, invoking the
-  bridge jar as a subprocess from Rust, parsing its output into
-  `project.toml`, the mediation-divergence warning seção 10 documents, and
-  multi-project iteration.
-- `JvmfastModelBuilder.buildAll` throws `UnsupportedOperationException`
-  unconditionally — walking `project.getConfigurations()` (`compileClasspath`/
-  `runtimeClasspath`/`testCompileClasspath`) to populate a real
-  `JvmfastDependencyModel` is not implemented; there's no model
-  implementation classes (`DefaultJvmfastModule`/etc.) yet either, only
-  the interfaces.
-- `gradle-bridge/` isn't packaged/embedded into the `jvmfast` binary or
-  its release artifacts in any way — it's a buildable, tested Gradle
-  project living in the repo, not yet something `cargo build`/the release
-  process bundles alongside `jvmfast` the way seção 10 describes ("um
-  helper JVM empacotado com o jvmfast").
+- `import-gradle` only imports the *first* Gradle module it sees —
+  `JvmfastModelBuilder.buildAll` only ever populates one `JvmfastModule`
+  today (single-project only), and `src/gradleimport/` defensively handles
+  (with a report note) a hypothetical multi-module result rather than
+  erroring, but neither side actually walks Gradle subprojects yet —
+  Fase 5 scope, same as jvm-fast's own multi-module support.
+- `import-gradle`'s generated `project.toml` always defaults
+  `java-version` to `"lts"` with a report note — `JvmfastDependencyModel`
+  doesn't expose Gradle's configured Java version (toolchain or
+  source/targetCompatibility) at all yet; extending the model to carry it
+  (mirroring how `import-pom` reads `maven.compiler.release`/etc.) is a
+  clean, self-contained follow-up, not started here.
+- `import-gradle` never imports BOMs/exclusions/extra repositories the way
+  `import-pom` does for Maven's `<dependencyManagement>`/`<exclusions>`/
+  `<repositories>` — Gradle's own equivalents (platform/BOM dependencies,
+  `exclude` blocks, custom `repositories {}`) aren't modeled by
+  `JvmfastDependencyModel` at all; only the flattened, already-resolved
+  dependency list per configuration is. `[repositories]` is always empty
+  in the generated manifest (a report note says so), meaning resolution
+  after import silently falls back to Maven Central
+  (`cli::context::resolve_base_url`'s existing default) regardless of
+  what repository the Gradle build actually used.
+- `import-gradle` requires a real, working `gradlew`/`gradlew.bat` in the
+  target project directory (`GradleImportError::GradlewNotFound`
+  otherwise) — matches seção 10's own documented limitation ("exige que o
+  projeto tenha um Gradle instalado ou um gradlew funcional"), not
+  something jvm-fast tries to route around.
 - `import-pom` never follows `<parent>` POM inheritance — a POM whose
   `<artifactId>`/`<version>`/properties/dependency versions come from a
   parent (extremely common in real multi-module Maven projects) fails
@@ -702,23 +889,27 @@ shortcuts):
 Next milestones, in order — **Fase 3 is complete** (build/run/test all
 implemented), both real-world Maven Central gaps that testing surfaced
 (checksum sidecar format, POM `<scope>` filtering) are fixed, and **Fase 4
-has started**: `jvmfast import-pom` is implemented end to end against
-fixture POMs (see the writeup and gaps above). The still-open, older,
-separately-documented property-interpolation/parent-POM-inheritance gap
-(seção 3.3 area, present since Fase 1) remains a real limitation for POMs
-that lean on it (e.g. `com.google.guava:guava`'s own
-`<dependencyManagement>`-managed `jsr305` dependency, and now also
-`import-pom`'s own parent-inheritance gap above) — worth calling out as a
-candidate for a future pick, though not promised or started here.
-`jvmfast import-gradle` (Tooling API bridge) is the next natural pick to
-finish out Fase 4 — its JVM-side plugin/model-builder skeleton
-(`gradle-bridge/`) now exists and is tested, but the Tooling API
-client-side connection, init-script generation, the Rust-side driver, and
-the CLI command itself are all still unstarted (see gaps above).
-Also pending: `jvmfast init` (seção 9.2) → credentials/auth (seção 3.2) →
-global `config.toml` loading (seção 3.5, overrides
-`WorkspaceConfig::default()`) → the rest of the Fase 1/Fase 2/Fase 3/Fase 4
-gaps listed above, each independently pickable.
+is now complete**: `jvmfast import-pom` and `jvmfast import-gradle` are
+both implemented end to end (the latter against a real Gradle Tooling API
+connection, real dependency resolution, real Maven Central — see the
+writeup and gaps above). The still-open, older, separately-documented
+property-interpolation/parent-POM-inheritance gap (seção 3.3 area, present
+since Fase 1) remains a real limitation for POMs that lean on it (e.g.
+`com.google.guava:guava`'s own `<dependencyManagement>`-managed `jsr305`
+dependency, and `import-pom`'s own parent-inheritance gap above) — worth
+calling out as a candidate for a future pick, though not promised or
+started here. With all four Fases now implemented (each with its own
+documented, typed gaps rather than silent scope creep), the natural next
+picks are, in no particular priority order: `jvmfast init` (seção 9.2 —
+still the only way to get a `project.toml` onto disk without hand-writing
+one is `import-pom`/`import-gradle`, both of which require an existing
+Maven/Gradle project to import *from*); credentials/auth (seção 3.2);
+global `config.toml` loading beyond `[defaults]` (seção 3.5, overlaying
+the full documented precedence chain onto `WorkspaceConfig::default()`);
+extending `JvmfastDependencyModel` to carry Gradle's configured Java
+version (closing `import-gradle`'s `java-version` gap above); or any of
+the other Fase 1/Fase 2/Fase 3/Fase 4 gaps listed above, each
+independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

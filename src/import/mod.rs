@@ -3,7 +3,7 @@ mod generate;
 mod range;
 
 pub use error::ImportError;
-pub use generate::ImportedVersion;
+pub use generate::{render_manifest, ImportedVersion};
 pub use range::{is_maven_range, translate_maven_range, RangeTranslation};
 
 use crate::pom::{parse_pom_xml, ManagedDependencyEntry, PomDependency};
