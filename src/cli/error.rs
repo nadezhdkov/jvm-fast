@@ -62,6 +62,9 @@ pub enum CliError {
     #[error("coordinate `{0}` was not found in the resolved dependency graph")]
     CoordinateNotResolved(String),
 
+    #[error("no module named `{0}` in this workspace")]
+    ModuleNotFound(String),
+
     #[error("{0} of {1} artifact download(s) failed")]
     DownloadsFailed(usize, usize),
 

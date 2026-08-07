@@ -1,6 +1,6 @@
 use crate::build::locked_classpath;
 use crate::cache::CacheStore;
-use crate::cli::context::{cache_root, jdks_root};
+use crate::cli::context::{cache_root, jdks_root, resolve_target_module};
 use crate::cli::CliError;
 use crate::jdk::find_installed;
 use crate::lockfile::is_lockfile_valid;
@@ -17,7 +17,15 @@ use std::path::Path;
 /// cada módulo + dependências do `project.lock`. Mesmas checagens de
 /// `cli::build` (lock presente e válido, JDK do projeto instalada) — `run`
 /// nunca resolve/baixa/instala nada implicitamente.
-pub fn run(root: &Path) -> Result<String, CliError> {
+///
+/// `module` (seção 12, Fase 5: `--module <nome>`) escolhe de qual módulo
+/// ler `[run]` — `None` cai no módulo raiz (`resolve_target_module`), então
+/// um workspace sem `[workspace].members` continua se comportando
+/// exatamente como antes da Fase 5. O classpath de execução continua
+/// incluindo o `target/classes` de *todos* os módulos, não só o
+/// selecionado + suas dependências — comportamento pré-existente, não
+/// restringido aqui.
+pub fn run(root: &Path, module: Option<String>) -> Result<String, CliError> {
     let workspace = load_workspace(root)?;
 
     if !root.join("project.lock").is_file() {
@@ -28,7 +36,8 @@ pub fn run(root: &Path) -> Result<String, CliError> {
         return Err(CliError::LockfileStale);
     }
 
-    let run_config = parse_run_config(&root.join("project.toml"))?;
+    let target_module = resolve_target_module(&workspace, module.as_deref())?;
+    let run_config = parse_run_config(&target_module.root.join("project.toml"))?;
     let main_class = run_config
         .main_class
         .ok_or(CliError::MainClassNotConfigured)?;

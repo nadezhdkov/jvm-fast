@@ -34,4 +34,7 @@ pub enum TestError {
 
     #[error("could not join classpath entries: {0}")]
     Classpath(#[source] std::env::JoinPathsError),
+
+    #[error("no module named `{0}` in this workspace")]
+    UnknownModule(String),
 }

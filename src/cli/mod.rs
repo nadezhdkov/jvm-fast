@@ -82,7 +82,11 @@ pub enum Command {
     /// Compila src/main/java para target/classes (exige project.lock válido).
     Build,
     /// Compila e executa [run].main-class (exige project.lock válido).
-    Run,
+    Run {
+        /// Qual módulo do workspace executar (seção 12, Fase 5); default: raiz.
+        #[arg(long)]
+        module: Option<String>,
+    },
     /// Compila e roda testes via JUnit Platform Console (seção 8.1).
     Test {
         /// `"tag:fast"` filtra por tag JUnit; qualquer outro valor é um
@@ -95,6 +99,11 @@ pub enum Command {
         /// Grava relatórios JUnit XML em target/test-reports.
         #[arg(long = "report-xml")]
         report_xml: bool,
+        /// Restringe a compilação/execução a um módulo do workspace (seção
+        /// 12, Fase 5); default: todos os módulos, com [dev-dependencies]
+        /// lidas do módulo raiz.
+        #[arg(long)]
+        module: Option<String>,
     },
     /// Exibe a árvore de dependências resolvida.
     Tree,
@@ -168,11 +177,12 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
             .await
             .map(|s| format_summary(&s)),
         Command::Build => build::run(root),
-        Command::Run => run::run(root),
+        Command::Run { module } => run::run(root, module),
         Command::Test {
             filter,
             fail_fast,
             report_xml,
+            module,
         } => {
             test::run(
                 root,
@@ -180,6 +190,7 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
                     filter,
                     fail_fast,
                     report_xml,
+                    module,
                 },
             )
             .await

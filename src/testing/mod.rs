@@ -32,6 +32,14 @@ pub struct TestRunSummary {
 /// `target/test-classes` (nunca entra no classpath de `build`/`run`, só
 /// aqui), e por fim invoca o Console Launcher (`console::run`).
 ///
+/// `target_module` (seção 12, Fase 5: `jvmfast test --module <nome>`)
+/// restringe compilação/execução a um único módulo — `None` preserva o
+/// comportamento anterior (todos os módulos, `[dev-dependencies]` sempre
+/// do módulo raiz — decisão de `cli::test`, não desta função). `Some(name)`
+/// sem correspondência em `workspace.modules` é `TestError::UnknownModule`,
+/// verificado antes de compilar qualquer coisa, não depois de um loop que
+/// silenciosamente não processaria nenhum módulo.
+///
 /// Itera `workspace.modules` em ordem topológica (`build::module_order`,
 /// mesma função que `build::build` já usa, seção 12 Fase 5) e, no
 /// classpath de *compilação* de cada módulo, inclui só o `target/classes`
@@ -41,7 +49,8 @@ pub struct TestRunSummary {
 /// módulo B enxergar as classes de A mesmo sem declarar dependência
 /// nenhuma nele, só por A ter sido processado primeiro). O classpath de
 /// *execução* passado ao Console Launcher continua incluindo produção +
-/// teste de todos os módulos, sempre — o JUnit precisa resolver classes em
+/// teste de todos os módulos *processados nesta chamada* (todos, ou só o
+/// selecionado via `target_module`) — o JUnit precisa resolver classes em
 /// tempo de execução independente de qual módulo declarou o quê, então não
 /// há por que restringir isso à mesma granularidade do classpath de
 /// compilação. `repo_base_url` (o `[repositories].default` do projeto)
@@ -52,6 +61,7 @@ pub struct TestRunSummary {
 pub async fn run_tests(
     workspace: &Workspace,
     dev_module: Option<&Module>,
+    target_module: Option<&str>,
     javac: &Path,
     java: &Path,
     cache_root: &Path,
@@ -62,6 +72,12 @@ pub async fn run_tests(
     filter: Option<&TestFilter>,
     reports_dir: Option<&Path>,
 ) -> Result<TestRunSummary, TestError> {
+    if let Some(name) = target_module {
+        if !workspace.modules.iter().any(|module| module.name == name) {
+            return Err(TestError::UnknownModule(name.to_string()));
+        }
+    }
+
     let cache_store = Arc::new(CacheStore::new(cache_root));
 
     let dependency_classpath = crate::build::locked_classpath(&workspace.lockfile, &cache_store)?;
@@ -104,6 +120,11 @@ pub async fn run_tests(
 
     for index in order {
         let module = &workspace.modules[index];
+        if let Some(name) = target_module {
+            if module.name != name {
+                continue;
+            }
+        }
         let production_classes_dir = production_classes_dirs[module.name.as_str()].clone();
 
         let mut module_classpath = base_classpath.clone();

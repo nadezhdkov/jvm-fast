@@ -97,8 +97,8 @@ JDKs, and global `config.toml` beyond `[defaults]`), Fase 3 (see below),
 and Fase 4 (multi-project Gradle builds, `java-version` extraction from
 Gradle, and `import-pom`'s parent-POM-inheritance gap) — each is a typed,
 rejected-not-faked error or a documented report note today, not silent
-scope creep. **Fase 5 (workspace e multi-módulo, seção 12) is nearly
-complete**: `[workspace].members` in the root `project.toml` is real —
+scope creep. **Fase 5 (workspace e multi-módulo, seção 12) is complete**:
+`[workspace].members` in the root `project.toml` is real —
 `workspace::load_workspace` loads every declared member as a genuine
 `Module` from its own `<member>/project.toml` — and a module can now
 declare `[workspace-dependencies]` on another module in the same
@@ -110,14 +110,15 @@ dependent's `javac -cp`) — verified end to end compiling one module's
 source against a class only another module defines, with real `javac`.
 `jvmfast test` was reconciled to scope its own compile classpath the same
 explicit, `workspace_dependencies`-based way instead of its old cruder
-implicit accumulation. Build is now incremental at module granularity too
+implicit accumulation. Build is incremental at module granularity too
 (`build::fingerprint`, content-hash-based, correctly propagating
 invalidation transitively through workspace dependencies) — `jvmfast
 build`/`run`/`test` all skip recompiling a module whose inputs haven't
-changed. Only giving member modules their own
-`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` instead of
-only the root's remains open — see the Fase 5 writeup below for exactly
-what's done versus what's left.
+changed. `jvmfast run`/`jvmfast test` both gained `--module <name>` (any
+module, root or member, can declare its own `[run]`/`[dev-dependencies]`;
+omitting the flag defaults to the root module, so single-module workspaces
+are entirely unaffected) — see the Fase 5 writeup below for the full
+breakdown.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -846,15 +847,33 @@ ordering/incremental build don't exist yet**:
   files never changed, alongside a mirror test proving both stay up to
   date when truly nothing changed (so the transitive-invalidation test
   isn't just "always rebuilds everything" in disguise).
-- **`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` stay
-  root-manifest-only.** `jvmfast run`/`test` and `cli::context::resolve_base_url`
-  still only ever read `root.join("project.toml")` — a non-root member
-  module declaring its own `[run].main-class` or `[dev-dependencies]` is
-  silently unused; `jvmfast run`/`test` have no `--module` selector to
-  point at one. Whether member modules should even be allowed to declare
-  those tables (vs. only the root can) is an open design question, not
-  decided here — this pass only needed root+member modules to resolve/
-  build correctly, not to be independently runnable/testable.
+- **`[run]`/`[dev-dependencies]` per module — implemented via `--module`.**
+  `jvmfast run --module <name>` and `jvmfast test --module <name>` (new
+  flag on both) pick which module's `[run]`/`[dev-dependencies]` apply —
+  any module, root or member, can declare its own. Omitting the flag
+  resolves to the root module (`cli::context::resolve_target_module`,
+  `None` → `workspace.modules[0]`, which `workspace::load_workspace`
+  guarantees is always the root — the manifest entry it reads first,
+  before any `[workspace].members`), so a workspace with no
+  `[workspace]` table at all — the pre-Fase-5 case — behaves exactly as
+  before, unchanged. For `test`, `--module` has a second effect beyond
+  picking `[dev-dependencies]`: it also restricts *which* module's
+  `src/test/java` gets compiled and run at all (`testing::run_tests`
+  gained a `target_module: Option<&str>` parameter) — `jvmfast test`
+  unscoped still compiles/runs every module's tests, same as before.
+  An unknown `--module` name is a typed error
+  (`CliError::ModuleNotFound`/`TestError::UnknownModule`), checked before
+  any compilation starts. Verified end to end with real `javac`/JUnit:
+  `tests/cli_run.rs` has a root and a member module each with a
+  *different* `main-class`, proving `--module` selects the right one;
+  `tests/cli_test.rs` has a root module with a genuinely *failing* test
+  and a member with a passing one — the unscoped run fails (both run),
+  `--module worker` only compiles/runs the member's test and passes,
+  proving the restriction is real rather than "happened to pass anyway."
+  `[repositories]`/`java-version` deliberately stay root-manifest-only —
+  they read as whole-workspace configuration (which repository to
+  resolve against, which JDK to use) rather than per-module concerns, so
+  extending them per-module wasn't attempted.
 - **No per-module diagnostics surface change.** `jvmfast why`/`jvmfast tree`
   already handled N modules correctly before this pass (`module_roots:
   HashMap<String, NodeId>`, proven by the pre-existing
@@ -1105,7 +1124,7 @@ since Fase 1) remains a real limitation for POMs that lean on it (e.g.
 `com.google.guava:guava`'s own `<dependencyManagement>`-managed `jsr305`
 dependency, and `import-pom`'s own parent-inheritance gap above) — worth
 calling out as a candidate for a future pick, though not promised or
-started here. **Fase 5 (workspace e multi-módulo) is well underway now**:
+started here. **Fase 5 (workspace e multi-módulo) is complete**:
 `workspace::load_workspace` really loads N modules from
 `[workspace].members`; every downstream consumer (`install`, resolution,
 mediation, the lockfile) already operated on them correctly with zero
@@ -1123,11 +1142,14 @@ instead of its own older, cruder, implicit accumulation. Build is also
 incremental at module granularity now (`build::fingerprint`,
 content-hash-based, transitive invalidation through workspace
 dependencies verified explicitly in tests) — `build`/`run`/`test` all
-skip a module whose inputs haven't changed. What's left inside Fase 5:
-deciding whether/how member modules get their own
-`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` instead of
-only the root manifest's (see "Known, deliberate gaps inside Fase 5"
-above). Outside Fase 5, the natural next picks
+skip a module whose inputs haven't changed. `jvmfast run`/`jvmfast test`
+both gained `--module <name>` (`cli::context::resolve_target_module`) so
+any module, root or member, can have its own `[run]`/`[dev-dependencies]`
+— defaults to the root module when omitted, so single-module workspaces
+are unaffected. `[repositories]`/`java-version` stay root-only by design
+(whole-workspace configuration, not per-module concerns) — see the Fase 5
+writeup above for the full breakdown. Outside Fase 5, the natural next
+picks
 are, in no particular priority order: `jvmfast init`
 (seção 9.2 — still the only way to get a `project.toml` onto disk without
 hand-writing one is `import-pom`/`import-gradle`, both of which require an

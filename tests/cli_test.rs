@@ -65,6 +65,7 @@ fn no_options() -> TestOptions {
         filter: None,
         fail_fast: false,
         report_xml: false,
+        module: None,
     }
 }
 
@@ -197,6 +198,7 @@ async fn test_filters_by_tag_and_excludes_non_matching_tests() {
             filter: Some("tag:fast".to_string()),
             fail_fast: false,
             report_xml: false,
+            module: None,
         },
     )
     .await;
@@ -226,6 +228,7 @@ async fn test_rejects_fail_fast_as_not_supported() {
             filter: None,
             fail_fast: true,
             report_xml: false,
+            module: None,
         },
     )
     .await;
@@ -370,6 +373,93 @@ async fn test_compiles_a_modules_tests_against_a_workspace_dependency() {
     let message = test_result.expect("test should compile against core's classes and pass");
     assert!(message.contains("all tests passed"));
     assert!(api_dir.join("target/test-classes/ApiTest.class").is_file());
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let _ = std::fs::remove_dir_all(&home_dir);
+}
+
+/// Fase 5: `--module` restricts compilation/execution to a single module.
+/// "root" has a *failing* test and "worker" (a `[workspace].members`
+/// entry) has a passing one — running unscoped fails (root's test runs
+/// too), but `--module worker` only compiles/runs worker's test and
+/// succeeds, proving the scope is real and not just "happened to pass."
+#[tokio::test]
+async fn test_module_flag_restricts_compilation_and_execution_to_one_module() {
+    let _guard = HOME_GUARD.lock().await;
+
+    let project_dir = temp_dir("module-flag");
+    let home_dir = temp_dir("module-flag-home");
+    let worker_dir = project_dir.join("worker");
+
+    let root_manifest =
+        "[project]\nname = \"root\"\nversion = \"0.1.0\"\njava-version = \"21\"\n\n\
+                          [workspace]\nmembers = [\"worker\"]\n";
+    std::fs::write(project_dir.join("project.toml"), root_manifest).unwrap();
+    std::fs::create_dir_all(project_dir.join("src/test/java")).unwrap();
+    std::fs::write(
+        project_dir.join("src/test/java/RootTest.java"),
+        "import org.junit.jupiter.api.Test;\n\
+         import static org.junit.jupiter.api.Assertions.fail;\n\
+         class RootTest {\n    @Test void broken() { fail(\"root always fails\"); }\n}\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(worker_dir.join("src/test/java")).unwrap();
+    std::fs::write(
+        worker_dir.join("project.toml"),
+        "[project]\nname = \"worker\"\nversion = \"0.1.0\"\njava-version = \"21\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        worker_dir.join("src/test/java/WorkerTest.java"),
+        "import org.junit.jupiter.api.Test;\n\
+         import static org.junit.jupiter.api.Assertions.assertEquals;\n\
+         class WorkerTest {\n    @Test void passes() { assertEquals(1, 1); }\n}\n",
+    )
+    .unwrap();
+
+    install_fake_jdk(&home_dir.join(".cache/jvmfast/jdks"), "21.0.1-tem");
+
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home_dir);
+
+    install(&project_dir, false, true)
+        .await
+        .expect("install should succeed");
+    let unscoped_result = test(&project_dir, no_options()).await;
+    let worker_result = test(
+        &project_dir,
+        TestOptions {
+            filter: None,
+            fail_fast: false,
+            report_xml: false,
+            module: Some("worker".to_string()),
+        },
+    )
+    .await;
+    let unknown_result = test(
+        &project_dir,
+        TestOptions {
+            filter: None,
+            fail_fast: false,
+            report_xml: false,
+            module: Some("nonexistent".to_string()),
+        },
+    )
+    .await;
+
+    match previous_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
+
+    assert!(
+        matches!(unscoped_result, Err(CliError::TestsFailed(_))),
+        "unscoped run must include root's failing test"
+    );
+    let worker_message = worker_result.expect("--module worker should only run worker's tests");
+    assert!(worker_message.contains("all tests passed"));
+    assert!(unknown_result.is_err());
 
     let _ = std::fs::remove_dir_all(&project_dir);
     let _ = std::fs::remove_dir_all(&home_dir);

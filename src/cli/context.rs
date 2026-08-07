@@ -45,3 +45,27 @@ pub fn cache_root() -> PathBuf {
 pub fn jdks_root() -> PathBuf {
     cache_root().join("jdks")
 }
+
+/// Resolve `--module <nome>` (seção 12, Fase 5: `jvmfast run`/`jvmfast
+/// test` precisam escolher *qual* módulo executar/testar quando o
+/// workspace tem mais de um) contra o `Workspace` já carregado. `None`
+/// (a flag omitida) sempre cai no módulo raiz — `workspace.modules[0]` por
+/// construção de `workspace::load_workspace` (o manifesto raiz é sempre o
+/// primeiro lido, antes de qualquer `[workspace].members`) — já que todo
+/// workspace tem um módulo raiz real (diferente de um workspace virtual
+/// estilo Cargo sem `[project]` próprio); isso preserva o comportamento de
+/// antes da Fase 5 sem mudança nenhuma quando não há `[workspace]`
+/// nenhum, já que nesse caso o único módulo *é* a raiz.
+pub fn resolve_target_module<'a>(
+    workspace: &'a crate::domain::Workspace,
+    module: Option<&str>,
+) -> Result<&'a crate::domain::Module, CliError> {
+    match module {
+        Some(name) => workspace
+            .modules
+            .iter()
+            .find(|candidate| candidate.name == name)
+            .ok_or_else(|| CliError::ModuleNotFound(name.to_string())),
+        None => Ok(&workspace.modules[0]),
+    }
+}

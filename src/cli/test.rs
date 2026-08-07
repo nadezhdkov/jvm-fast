@@ -1,4 +1,6 @@
-use crate::cli::context::{cache_root, jdks_root, resolve_base_url, MAVEN_CENTRAL};
+use crate::cli::context::{
+    cache_root, jdks_root, resolve_base_url, resolve_target_module, MAVEN_CENTRAL,
+};
 use crate::cli::CliError;
 use crate::download::DownloadClient;
 use crate::jdk::find_installed;
@@ -12,6 +14,7 @@ pub struct TestOptions {
     pub filter: Option<String>,
     pub fail_fast: bool,
     pub report_xml: bool,
+    pub module: Option<String>,
 }
 
 /// `jvmfast test` (seção 8.1): mesmas checagens de `cli::build`/`cli::run`
@@ -22,6 +25,13 @@ pub struct TestOptions {
 /// `testing::run_tests` para compilar `src/test/java` e invocar o JUnit
 /// Platform Console Standalone (`src/test/java` em si não é incremental
 /// ainda — cada `jvmfast test` recompila os testes do zero).
+///
+/// `options.module` (seção 12, Fase 5: `--module <nome>`) tem dois efeitos:
+/// `[dev-dependencies]` sempre vêm do módulo selecionado (`None` cai no
+/// módulo raiz via `resolve_target_module`, preservando o comportamento de
+/// antes da Fase 5 quando não há `[workspace]` nenhum), e é repassado a
+/// `testing::run_tests` pra restringir compilação/execução a só aquele
+/// módulo — `None` continua testando todos.
 pub async fn run(root: &Path, options: TestOptions) -> Result<String, CliError> {
     if options.fail_fast {
         return Err(CliError::FailFastNotSupported);
@@ -47,7 +57,8 @@ pub async fn run(root: &Path, options: TestOptions) -> Result<String, CliError> 
 
     crate::build::build(&workspace, &javac, &cache_root())?;
 
-    let dev_module = parse_dev_module(&root.join("project.toml"))?;
+    let target_module = resolve_target_module(&workspace, options.module.as_deref())?;
+    let dev_module = parse_dev_module(&target_module.root.join("project.toml"))?;
     let base_url = resolve_base_url(root)?;
     let download_client = DownloadClient::new(&workspace.config.network)?;
     let max_concurrent = workspace.config.network.concurrent_downloads.max(1) as usize;
@@ -58,6 +69,7 @@ pub async fn run(root: &Path, options: TestOptions) -> Result<String, CliError> 
     let summary = run_tests(
         &workspace,
         dev_module.as_ref(),
+        options.module.as_deref(),
         &javac,
         &java,
         &cache_root(),
