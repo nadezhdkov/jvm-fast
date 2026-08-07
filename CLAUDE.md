@@ -56,6 +56,20 @@ typed, rejected-not-faked error today, not silent scope creep.
   conventions, plus a README template for internal Rust crates (only
   applicable if/when the project adopts a multi-crate workspace — not yet
   decided; today it's a single binary crate with a `lib.rs`/`main.rs` split).
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — human-contributor-facing setup/
+  testing/lint/process guide (English); overlaps with `docs/CONVENTIONS.md`
+  on purpose (same rules, different audience) — if the two ever disagree,
+  `docs/CONVENTIONS.md` and the actual CI config (`.github/workflows/`)
+  win, since `CONTRIBUTING.md` is describing them, not defining them.
+- [`STYLE.md`](STYLE.md) — prose/CLI-messaging style guide; **partially
+  aspirational** (colored output, `--verbose`/logging levels, hints — none
+  implemented in `src/cli/` yet), same "spec ahead of code" spirit as
+  `docs/architecture.md`. Don't infer that a behavior it describes exists
+  without checking the code.
+- `AGENTS.md` — coding-agent-specific conventions (test style, error
+  typing, the real-JDK/real-Maven-Central test exceptions); consistent
+  with this file, kept separate because tools other than Claude Code read
+  `AGENTS.md` by convention.
 
 ## Build, test, lint
 

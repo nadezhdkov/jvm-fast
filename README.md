@@ -284,6 +284,9 @@ do formato do lockfile (`project.lock`, campo `version`) — ver
   commit para quem for contribuir
 - [`CLAUDE.md`](CLAUDE.md) — estado atual do código e roadmap de próximos
   marcos
+- [`STYLE.md`](STYLE.md) — guia de estilo para prosa e mensagens
+  voltadas ao usuário (CLI e docs); em inglês, parte dele descreve
+  comportamento ainda não implementado (ver ressalva no próprio arquivo)
 
 ---
 
@@ -292,7 +295,10 @@ do formato do lockfile (`project.lock`, campo `version`) — ver
 Erros de domínio são tipados (`thiserror`, nunca `anyhow`/`String`
 genérico); `async` só onde há concorrência real; `rustfmt`/`clippy` rodam
 sem `#[allow(...)]` não explicado. Ver
-[`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) para a lista completa.
+[`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) para a lista completa, ou
+[`CONTRIBUTING.md`](CONTRIBUTING.md) (em inglês) para o guia completo de
+setup, testes, lint e processo de contribuição. Vulnerabilidades de
+segurança seguem [`SECURITY.md`](SECURITY.md).
 
 ---
 
