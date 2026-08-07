@@ -21,7 +21,11 @@ project's resolved JDK and copies `src/main/resources` into
 `target/classes`, end to end against a real (system) JDK in tests — it
 requires a valid `project.lock` and never resolves/downloads/installs
 anything itself (typed errors point at `install`/`jdk install` instead).
-`run`/`test` are not started yet. Fase 4 (interop) is **not started** —
+`jvmfast run` builds on top of it: always recompiles (no incremental build
+yet), then executes `[run].main-class`/`jvm-args` via the project's
+resolved `java`, with a classpath of `target/classes` + the locked
+dependencies, stdio inherited so the program's own output goes straight to
+the terminal. `test` is not started yet. Fase 4 (interop) is **not started** —
 `docs/architecture.md` seção 12 and the roadmap below are the spec to
 implement against for those. See "Roadmap" below for the specific gaps
 left inside Fase 1 (targeted `update <coord>`, `add` without an explicit
@@ -208,6 +212,31 @@ silent scope creep.
   integration test — CI needs a JDK on `PATH` for these to run, unlike
   every other test suite in this repo, which never depends on host
   tooling).
+- `src/run/` — `run::run_main_class(java, classpath, jvm_args, main_class)`
+  (seção 8): the project's second subprocess-spawning module (after
+  `build::compile`), invokes `java -cp <classpath> <jvm-args> <main-class>`
+  with stdio inherited from the parent process — the user's program output
+  goes straight to the terminal, `jvmfast run` never captures/reformats
+  it. Deliberately just a thin wrapper around `std::process::Command`; all
+  classpath/JDK-selection logic lives in the caller (`cli::run`), same
+  split as `build::compile` vs. `cli::build`.
+- `src/cli/run.rs` — wires `jvmfast run`: same `project.lock`
+  presence/validity checks as `cli::build` (reuses
+  `CliError::LockfileMissing`/`LockfileStale`, now phrased generically for
+  both commands), reads `[run].main-class`/`jvm-args` via
+  `manifest::parse_run_config` (`CliError::MainClassNotConfigured` if
+  `main-class` is absent — a manifest without one has nothing for `run` to
+  execute), then *always* recompiles via `crate::build::build` (no
+  incremental build yet, so "compile if needed" is currently "compile,
+  full stop") before executing. Classpath = locked dependencies
+  (`build::locked_classpath`, now `pub` from `src/build/`) + every
+  module's `target/classes`. A non-zero exit from the user's program
+  becomes `CliError::ProgramExited(code)` (`-1` sentinel if the process
+  was killed by a signal, so no fake exit code is invented) — this repo's
+  first command whose success/failure depends on an *external* process's
+  outcome, not just its own logic.
+- Tested the same way as `build`: `tests/run.rs`/`tests/cli_run.rs` spawn
+  the real system `java`, not a mock.
 
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
@@ -270,12 +299,10 @@ shortcuts):
 
 **Known, deliberate gaps inside Fase 3 so far**:
 
-- `jvmfast run`/`jvmfast test` don't exist yet — `build` is the only
-  seção 8 command implemented; `run` (compile-if-needed + execute
-  `[run].main-class`) and `test` (seção 8.1: `src/test/java`,
-  `[dev-dependencies]` on a test-only classpath, JUnit Platform Console
-  Standalone) are next.
-- `build` recompiles from scratch every call — no incremental
+- `jvmfast test` doesn't exist yet — `src/test/java`,
+  `[dev-dependencies]` on a test-only classpath, and JUnit Platform
+  Console Standalone integration (seção 8.1) are next.
+- `build`/`run` recompile from scratch every call — no incremental
   compilation (source-hash/timestamp skip), matching seção 8's explicit
   "not mandatory in v1" scope note.
 - `[project].source-encoding` (seção 3, parsed by
@@ -289,15 +316,24 @@ shortcuts):
   structured per-diagnostic parsing (file/line/column), unlike the typed
   errors elsewhere in the codebase; seção 11's distinct
   compile-failure-vs-test-failure-vs-config-error exit codes aren't wired
-  yet either (nothing in `cli::run` maps `CliError` variants to distinct
-  process exit codes today, for any command).
+  yet either (nothing in `cli::run`, the module, i.e. `src/cli/mod.rs`'s
+  entrypoint function — not `src/cli/run.rs`, the new `jvmfast run`
+  command, confusingly same name at different paths — maps `CliError`
+  variants to distinct process exit codes today, for any command; it's
+  always a flat `SUCCESS`/`FAILURE`).
+- `jvmfast run` doesn't forward extra CLI arguments to the executed
+  program (e.g. `jvmfast run -- foo bar`) — seção 8 doesn't mention this
+  as required v1 behavior, and no `Command::Run` field exists for it yet.
+- `run_main_class`/`compile` both use `std::process::Command` directly
+  with no timeout — a hung user program or a hung `javac` blocks
+  `jvmfast` indefinitely; acceptable for a local dev tool in v1, not
+  flagged as a problem to fix without a concrete need.
 
-Next milestones, in order — rest of **Fase 3** (seção 8): `jvmfast run`
-(compile if needed, then execute `[run].main-class`/`jvm-args`) →
-`jvmfast test` (seção 8.1: `src/test/java` + `[dev-dependencies]` on a
-test-only classpath, JUnit Platform Console Standalone as an internal
-dependency, `--filter`/`--fail-fast`/`--report-xml`) → credentials/auth
-(seção 3.2) → global `config.toml` loading (seção 3.5, overrides
+Next milestones, in order — rest of **Fase 3** (seção 8.1): `jvmfast test`
+(`src/test/java` + `[dev-dependencies]` on a test-only classpath, JUnit
+Platform Console Standalone as an internal dependency,
+`--filter`/`--fail-fast`/`--report-xml`) → credentials/auth (seção 3.2) →
+global `config.toml` loading (seção 3.5, overrides
 `WorkspaceConfig::default()`) → the Fase 1/Fase 2/Fase 3 gaps listed
 above, each independently pickable.
 

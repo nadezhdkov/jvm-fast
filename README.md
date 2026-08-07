@@ -43,8 +43,9 @@
   list`/`jdk use`, e `[project].java-version` (incl. alias `"lts"`) resolvido
   e instalado automaticamente (com confirmação, a menos que `--yes`) por
   `install`/`update` (Fase 2 completa)
-- Compilação direta com `jvmfast build` (via `javac`, sem POM ou build
-  Gradle intermediário) — `run`/`test` ainda não (Fase 3 em andamento)
+- Compilação e execução diretas com `jvmfast build`/`run` (via
+  `javac`/`java`, sem POM ou build Gradle intermediário) — `test` ainda não
+  (Fase 3 em andamento)
 - Testes via JUnit Platform Console (planejado — Fase 3)
 - Cache global de artefatos, content-addressable
 - Suporte a BOMs para gestão centralizada de versões
@@ -94,10 +95,11 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/download` | Download paralelo de artefatos via `reqwest`/`tokio` (seção 6.2 passo 6) | Implementado — primeiro código `async` do projeto |
 | `src/maven` | Layout de path Maven (`group/artifact/version/...`) compartilhado entre `pom::http` e `download` | Implementado |
 | `src/resolve` | Orquestra BOMs → exclusions → grafo → mediação (seção 6.2, passos 3–5) | Implementado |
-| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`build`/`tree`/`why`/`jdk` (seção 9) | Fase 1 e Fase 2 completas; `build` implementado (Fase 3 em andamento) |
+| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`build`/`run`/`tree`/`why`/`jdk` (seção 9) | Fase 1 e Fase 2 completas; `build`/`run` implementados (Fase 3 em andamento) |
 | `src/jdk` | Instala JDKs Temurin via API do Adoptium (seção 7) + resolve o alias `"lts"` | Implementado |
 | `src/config` | Leitura/escrita de `[defaults]` em `~/.config/jvmfast/config.toml` (seção 3.5) | Implementado — só `[defaults]`; `[network]`/`[output]` ainda não são lidos |
-| `src/build` | Compila `src/main/java` com `javac` + copia `src/main/resources` para `target/classes` (seção 8) | `build` implementado — `run`/`test` ainda não |
+| `src/build` | Compila `src/main/java` com `javac` + copia `src/main/resources` para `target/classes` (seção 8) | Implementado |
+| `src/run` | Executa `[run].main-class` via `java`, stdio herdado (seção 8) | Implementado — `jvmfast test` ainda não |
 
 ---
 
@@ -147,10 +149,10 @@ cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk use 21
 ```
 
 `install`/`update` já resolvem `[project].java-version` (auto-instalando a
-JDK do projeto, com confirmação a menos que `--yes` seja passado), e
-`jvmfast build` já compila `src/main/java`/copia `src/main/resources` para
-`target/classes` usando essa JDK — só `run`/`test` (Fase 3) ainda não
-existem.
+JDK do projeto, com confirmação a menos que `--yes` seja passado);
+`jvmfast build` compila `src/main/java`/copia `src/main/resources` para
+`target/classes` usando essa JDK; e `jvmfast run` compila e executa
+`[run].main-class` — só `jvmfast test` (Fase 3) ainda não existe.
 
 ---
 
@@ -197,7 +199,7 @@ jvmfast update                                      # re-resolve ignorando o loc
 jvmfast tree                                        # árvore de dependências resolvida
 jvmfast why "com.fasterxml.jackson.core:jackson-core"
 jvmfast build                                       # compila src/main/java para target/classes
-jvmfast run                                         # ainda não implementado (Fase 3)
+jvmfast run                                         # compila e executa [run].main-class
 jvmfast test                                        # ainda não implementado (Fase 3)
 ```
 
@@ -210,9 +212,10 @@ jvmfast test                                        # ainda não implementado (F
   [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md)).
 - Nomes de teste descrevem o comportamento esperado, não a issue/PR que os
   motivou.
-- Exceção: `tests/build.rs`/`tests/cli_build.rs` (Fase 3) rodam contra a
-  JDK real do ambiente (`javac`/`java` no `PATH`) — `jvmfast build` só
-  invoca um compilador de verdade, então não faz sentido mocká-lo.
+- Exceção: `tests/build.rs`/`tests/cli_build.rs`/`tests/run.rs`/
+  `tests/cli_run.rs` (Fase 3) rodam contra a JDK real do ambiente
+  (`javac`/`java` no `PATH`) — `jvmfast build`/`run` só invocam um
+  compilador/JVM de verdade, então não faz sentido mocká-los.
 
 ```bash
 cargo test
@@ -241,7 +244,8 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — resolução de `java-version` no manifesto (incl. alias `"lts"`) em `install`/`update`, persistida em `project.lock`
 - [x] **Fase 2 completa** — gerenciamento de JDK, ponta a ponta
 - [x] Marco — `jvmfast build`: compila `src/main/java` com `javac` + copia `src/main/resources` (seção 8)
-- [ ] Fase 3 — `run`/`test` (em andamento)
+- [x] Marco — `jvmfast run`: compila e executa `[run].main-class`/`jvm-args` via `java` (seção 8)
+- [ ] Fase 3 — `test` (em andamento)
 - [ ] Fase 4 — interoperabilidade (`import-pom`, `import-gradle`)
 - [ ] Fase 5 — workspace e multi-módulo
 

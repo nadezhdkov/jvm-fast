@@ -14,6 +14,7 @@ mod edit;
 mod error;
 mod install;
 mod jdk;
+mod run;
 mod tree;
 mod why;
 
@@ -24,6 +25,7 @@ pub use install::{add, install, remove, InstallSummary};
 pub use jdk::{
     ensure_project_jdk, install_jdk, list as list_jdks, resolve_project_java_version, use_jdk,
 };
+pub use run::run as run_program;
 pub use tree::format_tree;
 pub use why::format_why;
 
@@ -74,6 +76,8 @@ pub enum Command {
     Remove { coordinate: String },
     /// Compila src/main/java para target/classes (exige project.lock válido).
     Build,
+    /// Compila e executa [run].main-class (exige project.lock válido).
+    Run,
     /// Exibe a árvore de dependências resolvida.
     Tree,
     /// Explica a origem de um artefato no grafo resolvido.
@@ -135,6 +139,7 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
             .await
             .map(|s| format_summary(&s)),
         Command::Build => build::run(root),
+        Command::Run => run::run(root),
         Command::Tree => {
             let workspace = load_workspace(root)?;
             let output = resolve_for_diagnostics(root, workspace.modules.clone()).await?;

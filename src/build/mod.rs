@@ -4,6 +4,7 @@ mod error;
 mod resources;
 mod sources;
 
+pub use classpath::locked_classpath;
 pub use error::BuildError;
 
 use crate::cache::CacheStore;

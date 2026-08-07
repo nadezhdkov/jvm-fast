@@ -32,6 +32,9 @@ pub enum CliError {
     #[error(transparent)]
     Build(#[from] crate::build::BuildError),
 
+    #[error(transparent)]
+    Run(#[from] crate::run::RunError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 
@@ -59,11 +62,19 @@ pub enum CliError {
     #[error("Java {0} is required by project.toml but is not installed — declined automatic install (pass `--yes` to install non-interactively)")]
     JdkInstallDeclined(String),
 
-    #[error("no project.lock found — run `jvmfast install` before building")]
+    #[error("no project.lock found — run `jvmfast install` before building/running")]
     LockfileMissing,
 
     #[error(
-        "project.lock is stale (project.toml changed since it was generated) — run `jvmfast install` or `jvmfast update` before building"
+        "project.lock is stale (project.toml changed since it was generated) — run `jvmfast install` or `jvmfast update` before building/running"
     )]
     LockfileStale,
+
+    #[error(
+        "no [run].main-class configured in project.toml — `jvmfast run` needs one to know what to execute"
+    )]
+    MainClassNotConfigured,
+
+    #[error("program exited with status {0}")]
+    ProgramExited(i32),
 }

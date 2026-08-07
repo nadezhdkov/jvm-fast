@@ -38,6 +38,31 @@ pub fn parse_java_version(path: &Path) -> Result<String, ManifestError> {
     Ok(parse_manifest(path)?.project.java_version)
 }
 
+/// `[run]` (seção 3) — mesmo raciocínio de `parse_repositories`: é
+/// configuração de *como* executar, não algo que `Module` (seção 3.1)
+/// modela. `[run]` inteiro é opcional no manifesto (nem todo projeto tem
+/// `main-class` definido, ex. bibliotecas sem entry point), então ausência
+/// vira `RunConfig` "vazio" honesto, não erro — `jvmfast run` (seção 8) é
+/// quem decide que a ausência de `main-class` é um problema pra *ele*.
+pub struct RunConfig {
+    pub main_class: Option<String>,
+    pub jvm_args: Vec<String>,
+}
+
+pub fn parse_run_config(path: &Path) -> Result<RunConfig, ManifestError> {
+    let run = parse_manifest(path)?.run;
+    Ok(match run {
+        Some(run) => RunConfig {
+            main_class: run.main_class,
+            jvm_args: run.jvm_args,
+        },
+        None => RunConfig {
+            main_class: None,
+            jvm_args: Vec::new(),
+        },
+    })
+}
+
 fn parse_manifest(path: &Path) -> Result<dto::ProjectManifest, ManifestError> {
     let contents = std::fs::read_to_string(path).map_err(|e| ManifestError::Io {
         path: path.to_path_buf(),
