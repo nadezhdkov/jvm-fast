@@ -27,6 +27,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # `tests/build.rs`/`tests/cli_build.rs` (Fase 3, seção 8) shell out to
+      # a real `javac`/`java` — GitHub's ubuntu-latest image ships JDKs but
+      # doesn't put them on PATH without this step.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
       - name: cargo clippy

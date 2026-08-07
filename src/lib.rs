@@ -1,4 +1,5 @@
 pub mod bom;
+pub mod build;
 pub mod cache;
 pub mod cli;
 pub mod config;

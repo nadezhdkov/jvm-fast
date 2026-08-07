@@ -22,3 +22,13 @@ pub fn list_installed(jdks_root: &Path) -> Result<Vec<String>, JdkError> {
     names.sort();
     Ok(names)
 }
+
+/// Encontra, entre as JDKs instaladas, a que corresponde à major version
+/// pedida (`"21"` casa com o diretório `"21.0.2-tem"`) — usado por `jdk
+/// list`/`jdk use`/`ensure_installed` (seção 7) e por `cli::build` para
+/// localizar `bin/javac` da JDK do projeto (`Lockfile.java_version`).
+pub fn find_installed(jdks_root: &Path, feature_version: &str) -> Result<Option<String>, JdkError> {
+    Ok(list_installed(jdks_root)?
+        .into_iter()
+        .find(|version| version.split('.').next() == Some(feature_version)))
+}

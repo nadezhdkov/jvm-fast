@@ -7,7 +7,7 @@ mod platform;
 pub use adoptium::{AdoptiumClient, JdkRelease};
 pub use error::JdkError;
 pub use install::{install, is_installed, jdk_install_dir};
-pub use list::list_installed;
+pub use list::{find_installed, list_installed};
 pub use platform::current_platform;
 
 /// `jvmfast jdk install <version>` só aceita major version por ora

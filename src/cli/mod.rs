@@ -8,6 +8,7 @@
 // cópia extra é irrelevante na prática.
 #![allow(clippy::result_large_err)]
 
+mod build;
 mod context;
 mod edit;
 mod error;
@@ -16,6 +17,7 @@ mod jdk;
 mod tree;
 mod why;
 
+pub use build::run as build;
 pub use edit::{add_dependency, remove_dependency, ManifestEditError};
 pub use error::CliError;
 pub use install::{add, install, remove, InstallSummary};
@@ -70,6 +72,8 @@ pub enum Command {
     },
     /// Remove uma dependência de [dependencies] e re-resolve.
     Remove { coordinate: String },
+    /// Compila src/main/java para target/classes (exige project.lock válido).
+    Build,
     /// Exibe a árvore de dependências resolvida.
     Tree,
     /// Explica a origem de um artefato no grafo resolvido.
@@ -130,6 +134,7 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
         Command::Remove { coordinate } => install::remove(root, &coordinate)
             .await
             .map(|s| format_summary(&s)),
+        Command::Build => build::run(root),
         Command::Tree => {
             let workspace = load_workspace(root)?;
             let output = resolve_for_diagnostics(root, workspace.modules.clone()).await?;

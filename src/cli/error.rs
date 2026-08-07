@@ -29,6 +29,9 @@ pub enum CliError {
     #[error(transparent)]
     Config(#[from] crate::config::ConfigError),
 
+    #[error(transparent)]
+    Build(#[from] crate::build::BuildError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 
@@ -55,4 +58,12 @@ pub enum CliError {
 
     #[error("Java {0} is required by project.toml but is not installed — declined automatic install (pass `--yes` to install non-interactively)")]
     JdkInstallDeclined(String),
+
+    #[error("no project.lock found — run `jvmfast install` before building")]
+    LockfileMissing,
+
+    #[error(
+        "project.lock is stale (project.toml changed since it was generated) — run `jvmfast install` or `jvmfast update` before building"
+    )]
+    LockfileStale,
 }

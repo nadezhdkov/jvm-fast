@@ -15,15 +15,21 @@ version` (including the `"lts"` alias) is now resolved and auto-installed
 (with interactive confirmation unless `--yes`) as part of `jvmfast
 install`/`update`, and the concrete resolved version is persisted in
 `project.lock` (`Lockfile.java_version`) so the alias doesn't silently
-re-resolve on every build. Fase 3 (build/run/test) and Fase 4 (interop) are
-**not started** — `docs/architecture.md` seção 12 and the roadmap below are
-the spec to implement against for those. See "Roadmap" below for the
-specific gaps left inside Fase 1 (targeted `update <coord>`, `add` without
-an explicit version, dev-dependencies, multi-repository fallback, per-host
-download throttling) and Fase 2 (exact-version JDK install, listing
-*available* (not just installed) JDKs, and global `config.toml` beyond
-`[defaults]`) — each is a typed, rejected-not-faked error today, not silent
-scope creep.
+re-resolve on every build. **Fase 3 (build/run/test, seção 8) is in
+progress**: `jvmfast build` compiles `src/main/java` with `javac` from the
+project's resolved JDK and copies `src/main/resources` into
+`target/classes`, end to end against a real (system) JDK in tests — it
+requires a valid `project.lock` and never resolves/downloads/installs
+anything itself (typed errors point at `install`/`jdk install` instead).
+`run`/`test` are not started yet. Fase 4 (interop) is **not started** —
+`docs/architecture.md` seção 12 and the roadmap below are the spec to
+implement against for those. See "Roadmap" below for the specific gaps
+left inside Fase 1 (targeted `update <coord>`, `add` without an explicit
+version, dev-dependencies, multi-repository fallback, per-host download
+throttling), Fase 2 (exact-version JDK install, listing *available* (not
+just installed) JDKs, and global `config.toml` beyond `[defaults]`), and
+Fase 3 (see below) — each is a typed, rejected-not-faked error today, not
+silent scope creep.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -40,7 +46,11 @@ scope creep.
 
 - `cargo build` — build the `jvmfast` binary
 - `cargo test` — run all tests (integration tests for manifest parsing live
-  in `tests/manifest_parsing.rs`, using fixtures under `tests/fixtures/`)
+  in `tests/manifest_parsing.rs`, using fixtures under `tests/fixtures/`).
+  **Requires a real `javac`/`java` on `PATH`** since `tests/build.rs`/
+  `tests/cli_build.rs` (Fase 3) shell out to the system JDK, not a mock —
+  the only test suite in this repo with that dependency; CI installs one
+  via `actions/setup-java` (see `.github/workflows/rust.yml`)
 - `cargo test <name>` — run a single test by name substring (e.g. `cargo
   test bom_managed_dependency`)
 - `cargo clippy --all-targets -- -D warnings` — lint; CI fails on any
@@ -162,6 +172,43 @@ scope creep.
   concrete major version selected at resolution time, never the `"lts"`
   alias itself); `lockfile::build_lockfile` takes it as a parameter.
 
+**Fase 3 (build/run/test, seção 8) — in progress**:
+
+- `src/build/` — `build::build(workspace, javac, cache_root)` (seção 8):
+  iterates `workspace.modules` (never indexes `[0]`, per the Fase 5
+  compatibility rules below) and, per module, compiles
+  `src/main/java` with `javac -d target/classes -cp <classpath>
+  <sources...>` then copies `src/main/resources` into `target/classes`,
+  preserving relative structure — matching seção 8's "no separate merge
+  step" rule. `build::classpath::locked_classpath` builds the classpath
+  entirely from `project.lock` (`CacheStore::artifact_path` per
+  `LockedPackage`, seção 5) — never re-resolves or touches the network; a
+  package listed in the lock but missing from the cache is
+  `BuildError::MissingArtifact`, pointing at `jvmfast install`, not a
+  silently-incomplete classpath. `build::compile` shells out to the real
+  `javac` binary via `std::process::Command` (the project's first
+  subprocess-spawning code) and reports non-zero exit as
+  `BuildError::CompileFailed { stderr }`; a module with zero `.java` files
+  is a valid no-op build (still creates `target/classes` for resources to
+  land in).
+- `src/cli/build.rs` — wires `jvmfast build`: requires `project.lock` to
+  exist and be valid (`CliError::LockfileMissing`/`LockfileStale` — build
+  never resolves/downloads implicitly), then resolves the project's
+  installed JDK via `jdk::find_installed(jdks_root, &lockfile.java_version)`
+  (`CliError::JavaVersionNotInstalled` if that JDK was never `jdk
+  install`ed) and points `javac` at `<jdks_root>/<installed>/bin/javac`.
+- `src/jdk/list.rs` gained `find_installed` (major-version → installed
+  directory name lookup), extracted from logic that was duplicated across
+  `jdk list`/`jdk use`/`ensure_installed` (Fase 2) and now reused a fourth
+  time by `cli::build`.
+- Tested against the real system `javac`/`java` (not a mock or a
+  downloaded Temurin) — `build` only needs a working `javac` binary at a
+  path, so `tests/build.rs`/`tests/cli_build.rs` point it at whatever JDK
+  is actually installed in the environment (a real, if incidental,
+  integration test — CI needs a JDK on `PATH` for these to run, unlike
+  every other test suite in this repo, which never depends on host
+  tooling).
+
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
 
@@ -221,12 +268,38 @@ shortcuts):
   Linux/macOS × x86_64/aarch64, matching `cache::cache_root()`'s existing
   Unix-only stance.
 
-Next milestones, in order — **Fase 3** (build/run/test, seção 8):
-`jvmfast build`/`run`/`test`, `javac` compilation using the now-resolved
-project JDK, JUnit Platform Console integration → credentials/auth
+**Known, deliberate gaps inside Fase 3 so far**:
+
+- `jvmfast run`/`jvmfast test` don't exist yet — `build` is the only
+  seção 8 command implemented; `run` (compile-if-needed + execute
+  `[run].main-class`) and `test` (seção 8.1: `src/test/java`,
+  `[dev-dependencies]` on a test-only classpath, JUnit Platform Console
+  Standalone) are next.
+- `build` recompiles from scratch every call — no incremental
+  compilation (source-hash/timestamp skip), matching seção 8's explicit
+  "not mandatory in v1" scope note.
+- `[project].source-encoding` (seção 3, parsed by
+  `manifest::dto::ProjectSection` since Fase 1) isn't passed to `javac`
+  yet (no `-encoding` flag) — `build` doesn't read it at all currently.
+- Annotation processing relies entirely on `javac`'s automatic
+  `META-INF/services` discovery (seção 8's documented v1 scope); no
+  explicit `-processor`/`-Akey=value` support, and none planned before
+  seção 8 says so.
+- `BuildError::CompileFailed` surfaces raw `javac` stderr as-is — no
+  structured per-diagnostic parsing (file/line/column), unlike the typed
+  errors elsewhere in the codebase; seção 11's distinct
+  compile-failure-vs-test-failure-vs-config-error exit codes aren't wired
+  yet either (nothing in `cli::run` maps `CliError` variants to distinct
+  process exit codes today, for any command).
+
+Next milestones, in order — rest of **Fase 3** (seção 8): `jvmfast run`
+(compile if needed, then execute `[run].main-class`/`jvm-args`) →
+`jvmfast test` (seção 8.1: `src/test/java` + `[dev-dependencies]` on a
+test-only classpath, JUnit Platform Console Standalone as an internal
+dependency, `--filter`/`--fail-fast`/`--report-xml`) → credentials/auth
 (seção 3.2) → global `config.toml` loading (seção 3.5, overrides
-`WorkspaceConfig::default()`) → the Fase 1/Fase 2 gaps listed above, each
-independently pickable.
+`WorkspaceConfig::default()`) → the Fase 1/Fase 2/Fase 3 gaps listed
+above, each independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

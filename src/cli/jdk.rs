@@ -2,8 +2,8 @@ use crate::cli::context::{jdks_root, ADOPTIUM_API};
 use crate::cli::CliError;
 use crate::config::{config_path, load_defaults, write_default_java_version};
 use crate::jdk::{
-    current_platform, install, list_installed, parse_major_version, resolve_feature_version,
-    AdoptiumClient,
+    current_platform, find_installed, install, list_installed, parse_major_version,
+    resolve_feature_version, AdoptiumClient,
 };
 use std::io::Write;
 use std::path::Path;
@@ -62,11 +62,7 @@ pub fn list() -> Result<String, CliError> {
 pub fn use_jdk(version_spec: &str) -> Result<String, CliError> {
     let feature_version = parse_major_version(version_spec)?;
 
-    let installed = list_installed(&jdks_root())?;
-    let is_installed = installed
-        .iter()
-        .any(|version| version.split('.').next() == Some(feature_version));
-    if !is_installed {
+    if find_installed(&jdks_root(), feature_version)?.is_none() {
         return Err(CliError::JavaVersionNotInstalled(
             feature_version.to_string(),
         ));
@@ -103,11 +99,7 @@ async fn ensure_installed(
     adoptium: &AdoptiumClient,
     yes: bool,
 ) -> Result<(), CliError> {
-    let installed = list_installed(&jdks_root())?;
-    let already_installed = installed
-        .iter()
-        .any(|version| version.split('.').next() == Some(feature_version));
-    if already_installed {
+    if find_installed(&jdks_root(), feature_version)?.is_some() {
         return Ok(());
     }
 
