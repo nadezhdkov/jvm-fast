@@ -23,6 +23,9 @@ pub enum CliError {
     #[error(transparent)]
     MavenLayout(#[from] crate::maven::MavenLayoutError),
 
+    #[error(transparent)]
+    Jdk(#[from] crate::jdk::JdkError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 

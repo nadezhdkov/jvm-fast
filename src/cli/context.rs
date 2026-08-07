@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 /// mostra `default = "https://repo1.maven.org/maven2"` como o valor comum).
 pub const MAVEN_CENTRAL: &str = "https://repo1.maven.org/maven2";
 
+/// API pública do Eclipse Temurin/Adoptium (seção 7) — única fonte de
+/// distribuição de JDK que a arquitetura documenta.
+pub const ADOPTIUM_API: &str = "https://api.adoptium.net";
+
 /// Resolve a URL-base do repositório a usar (seção 3: `[repositories]`).
 ///
 /// **Escopo desta passada**: `[repositories]` é um mapa nomeado
@@ -35,4 +39,9 @@ pub fn cache_root() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".cache/jvmfast")
+}
+
+/// Raiz das JDKs instaladas (seção 5: `~/.cache/jvmfast/jdks/`).
+pub fn jdks_root() -> PathBuf {
+    cache_root().join("jdks")
 }

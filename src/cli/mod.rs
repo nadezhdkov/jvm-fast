@@ -12,6 +12,7 @@ mod context;
 mod edit;
 mod error;
 mod install;
+mod jdk;
 mod tree;
 mod why;
 
@@ -61,6 +62,19 @@ pub enum Command {
     Tree,
     /// Explica a origem de um artefato no grafo resolvido.
     Why { coordinate: String },
+    /// Gerenciamento de JDK — instala/lista distribuições Temurin (seção 7).
+    Jdk {
+        #[command(subcommand)]
+        action: JdkCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum JdkCommand {
+    /// Instala a última release Temurin de uma major version (ex. `21`).
+    Install { version: String },
+    /// Lista as JDKs instaladas.
+    List,
 }
 
 /// Ponto de entrada único, chamado por `main.rs` dentro de um runtime
@@ -113,6 +127,12 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
             format_why(&output.graph, &output.module_roots, &coordinate)
                 .ok_or(CliError::CoordinateNotResolved(coordinate))
         }
+        Command::Jdk {
+            action: JdkCommand::Install { version },
+        } => jdk::install_jdk(&version).await,
+        Command::Jdk {
+            action: JdkCommand::List,
+        } => jdk::list(),
     }
 }
 
