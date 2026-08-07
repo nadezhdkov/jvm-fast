@@ -783,15 +783,24 @@ ordering/incremental build don't exist yet**:
   has an `api` module whose source genuinely imports and calls a class
   `core` defines — it only compiles successfully if both the ordering and
   the classpath assembly are correct.
-- **Not touched in this pass**: `testing::run_tests` (`jvmfast test`)
-  still iterates modules in declaration order with its own, different,
-  pre-existing implicit classpath-accumulation behavior (every module's
-  test compile already sees *every previously-processed* module's
-  production+test classes, regardless of any declared dependency,
-  ordered by `[workspace].members` order — a cruder mechanism than
-  `build`'s new explicit one, and one this pass deliberately left alone
-  rather than half-reconciling under time pressure; worth revisiting so
-  `test` and `build` agree on what "sees another module's classes" means).
+- **`testing::run_tests` reconciled with `build`'s explicit model —
+  implemented.** Previously left as a known gap (an implicit
+  "every-previously-processed-module's classes are visible" accumulator,
+  ordered by `[workspace].members` declaration order, regardless of any
+  actual declared dependency); now uses `build::module_order` the same way
+  `build::build` does, and each module's *compile-time* classpath for
+  `src/test/java` includes only its own `target/classes` plus each
+  `workspace_dependencies` entry's — not everyone processed so far. The
+  Console Launcher's *run-time* classpath (passed to `console::run`)
+  deliberately keeps accumulating every module's production+test classes
+  regardless of declared dependency, since JUnit needs to resolve classes
+  at runtime independent of who declared what at compile time — only the
+  compile-time scoping changed, not execution. Verified end to end against
+  the real JUnit Platform Console Launcher, not just unit-level plumbing:
+  `tests/cli_test.rs::test_compiles_a_modules_tests_against_a_workspace_dependency`
+  has an "api" module's test class that calls a class only "core" defines,
+  reachable only via `[workspace-dependencies].core = true` — it compiles
+  and the real JUnit run passes.
 - **No incremental build.** Content-hash-based skip-if-unchanged per
   module (seção 12's "build incremental... reaproveitando o mesmo
   mecanismo de content-addressable storage da seção 5, agora aplicado a
@@ -1062,13 +1071,16 @@ that, cross-module dependencies (`[workspace-dependencies]`,
 `EdgeKind::WorkspaceModule` is real code now, not a dead enum variant),
 topological build ordering (`build::module_order`), and inter-module
 classpaths in `jvmfast build` are all implemented and verified end to end
-with real `javac` (see the Fase 5 writeup above). What's left inside
-Fase 5: incremental build (content-hash skip-if-unchanged), reconciling
-`jvmfast test`'s own different implicit classpath-accumulation behavior
-with `build`'s new explicit one, and deciding whether/how member modules
-get their own `[run]`/`[dev-dependencies]`/`[repositories]`/`java-version`
-instead of only the root manifest's (see "Known, deliberate gaps inside
-Fase 5" above for all of these). Outside Fase 5, the natural next picks
+with real `javac` (see the Fase 5 writeup above) — and `jvmfast test`
+(`testing::run_tests`) now agrees with `build` on what "sees another
+module's classes" means (explicit `workspace_dependencies`-scoped
+compile-time classpath, verified against the real JUnit Console Launcher)
+instead of its own older, cruder, implicit accumulation. What's left
+inside Fase 5: incremental build (content-hash skip-if-unchanged), and
+deciding whether/how member modules get their own
+`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` instead of
+only the root manifest's (see "Known, deliberate gaps inside Fase 5"
+above for both). Outside Fase 5, the natural next picks
 are, in no particular priority order: `jvmfast init`
 (seção 9.2 — still the only way to get a `project.toml` onto disk without
 hand-writing one is `import-pom`/`import-gradle`, both of which require an

@@ -304,6 +304,77 @@ async fn test_resolves_and_downloads_dev_dependencies() {
     let _ = std::fs::remove_dir_all(&home_dir);
 }
 
+/// Fase 5: proves `testing::run_tests`' explicit workspace-dependency-aware
+/// compile classpath actually works against the real JUnit Console
+/// Launcher — "api"'s test class calls a class only "core" defines, which
+/// only compiles if "api" declared `[workspace-dependencies].core = true`
+/// and `run_tests` put `core`'s `target/classes` on `api`'s test compile
+/// classpath (not just relied on `core` having been processed earlier by
+/// coincidence, the old implicit-accumulation behavior this replaced).
+#[tokio::test]
+async fn test_compiles_a_modules_tests_against_a_workspace_dependency() {
+    let _guard = HOME_GUARD.lock().await;
+
+    let project_dir = temp_dir("workspace-dep");
+    let home_dir = temp_dir("workspace-dep-home");
+    let core_dir = project_dir.join("core");
+    let api_dir = project_dir.join("api");
+
+    let root_manifest =
+        "[project]\nname = \"root\"\nversion = \"0.1.0\"\njava-version = \"21\"\n\n\
+                          [workspace]\nmembers = [\"core\", \"api\"]\n";
+    std::fs::write(project_dir.join("project.toml"), root_manifest).unwrap();
+
+    std::fs::create_dir_all(core_dir.join("src/main/java/com/exemplo")).unwrap();
+    std::fs::write(
+        core_dir.join("project.toml"),
+        "[project]\nname = \"core\"\nversion = \"0.1.0\"\njava-version = \"21\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        core_dir.join("src/main/java/com/exemplo/Greeter.java"),
+        "package com.exemplo;\npublic class Greeter { public static String hello() { return \"hi\"; } }\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(api_dir.join("src/test/java")).unwrap();
+    std::fs::write(
+        api_dir.join("project.toml"),
+        "[project]\nname = \"api\"\nversion = \"0.1.0\"\njava-version = \"21\"\n\n\
+         [workspace-dependencies]\ncore = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        api_dir.join("src/test/java/ApiTest.java"),
+        "import org.junit.jupiter.api.Test;\n\
+         import static org.junit.jupiter.api.Assertions.assertEquals;\n\
+         import com.exemplo.Greeter;\n\
+         class ApiTest {\n    @Test void callsCore() { assertEquals(\"hi\", Greeter.hello()); }\n}\n",
+    )
+    .unwrap();
+
+    install_fake_jdk(&home_dir.join(".cache/jvmfast/jdks"), "21.0.1-tem");
+
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home_dir);
+
+    let install_result = install(&project_dir, false, true).await;
+    let test_result = test(&project_dir, no_options()).await;
+
+    match previous_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
+
+    install_result.expect("install should succeed");
+    let message = test_result.expect("test should compile against core's classes and pass");
+    assert!(message.contains("all tests passed"));
+    assert!(api_dir.join("target/test-classes/ApiTest.class").is_file());
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let _ = std::fs::remove_dir_all(&home_dir);
+}
+
 #[tokio::test]
 async fn test_rejects_missing_lockfile() {
     let _guard = HOME_GUARD.lock().await;
