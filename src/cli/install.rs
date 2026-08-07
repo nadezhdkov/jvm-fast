@@ -1,6 +1,7 @@
 use crate::cache::CacheStore;
 use crate::cli::context::{cache_root, resolve_base_url};
 use crate::cli::edit::{add_dependency, remove_dependency};
+use crate::cli::jdk::{ensure_project_jdk, resolve_project_java_version};
 use crate::cli::CliError;
 use crate::domain::{DependencyGraph, Workspace};
 use crate::download::{ArtifactRequest, DownloadClient};
@@ -33,7 +34,7 @@ pub struct InstallSummary {
 /// sempre re-resolve; `force=false` (usado por `install`) segue o
 /// fluxograma da seção 6: lock válido → pula direto para o download dos
 /// artefatos ainda ausentes do cache, sem re-fetch de POM nenhum.
-pub async fn install(root: &Path, force: bool) -> Result<InstallSummary, CliError> {
+pub async fn install(root: &Path, force: bool, yes: bool) -> Result<InstallSummary, CliError> {
     let workspace = load_workspace(root)?;
     let current_hash = current_manifest_hash(root)?;
     // `load_workspace` sintetiza um `Lockfile` vazio com o hash *atual* já
@@ -50,6 +51,7 @@ pub async fn install(root: &Path, force: bool) -> Result<InstallSummary, CliErro
     let max_concurrent = workspace.config.network.concurrent_downloads.max(1) as usize;
 
     if lock_is_valid {
+        ensure_project_jdk(&workspace.lockfile.java_version, yes).await?;
         let (downloaded, reused) = download_locked_packages(
             &workspace,
             &download_client,
@@ -64,6 +66,8 @@ pub async fn install(root: &Path, force: bool) -> Result<InstallSummary, CliErro
             reused_lockfile: true,
         });
     }
+
+    let java_version = resolve_project_java_version(root, yes).await?;
 
     let base_url = resolve_base_url(root)?;
     let resolve_output = {
@@ -98,7 +102,13 @@ pub async fn install(root: &Path, force: bool) -> Result<InstallSummary, CliErro
         return Err(CliError::DownloadsFailed(failed, downloaded));
     }
 
-    let lockfile = build_lockfile(&resolve_output.graph, current_hash, &checksums, &base_url)?;
+    let lockfile = build_lockfile(
+        &resolve_output.graph,
+        current_hash,
+        &checksums,
+        &base_url,
+        &java_version,
+    )?;
     write_lockfile(&root.join("project.lock"), &lockfile)?;
 
     Ok(InstallSummary {
@@ -127,7 +137,12 @@ pub async fn add(
         .ok_or_else(|| CliError::VersionOmittedNotSupported(coordinate_spec.to_string()))?;
 
     add_dependency(&root.join("project.toml"), coordinate, version)?;
-    install(root, true).await
+    // `add`/`remove` só editam `[dependencies]`, nunca `[project].java-version`
+    // — não faz sentido bloquear a edição do manifesto numa confirmação
+    // interativa de JDK por causa disso, então sempre se comportam como
+    // `--yes` para esse passo específico (mesmo raciocínio de `force=true`
+    // logo abaixo: sempre re-resolvem).
+    install(root, true, true).await
 }
 
 /// `jvmfast remove <coord>` — remove do manifesto e re-resolve.
@@ -136,7 +151,7 @@ pub async fn remove(root: &Path, coordinate: &str) -> Result<InstallSummary, Cli
     if !removed {
         return Err(CliError::DependencyNotDeclared(coordinate.to_string()));
     }
-    install(root, true).await
+    install(root, true, true).await
 }
 
 /// Passo 6 da seção 6.2 quando o lock já é válido: nenhum POM é buscado de

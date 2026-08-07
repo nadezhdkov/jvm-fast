@@ -29,6 +29,7 @@ fn is_lockfile_valid_checks_manifest_hash() {
     let lockfile = Lockfile {
         version: 1,
         manifest_hash: "sha256:abc".to_string(),
+        java_version: "21".to_string(),
         packages: Vec::new(),
         requests: Vec::new(),
     };
@@ -42,6 +43,7 @@ fn lockfile_round_trips_through_toml_with_documented_field_names() {
     let lockfile = Lockfile {
         version: 1,
         manifest_hash: "sha256:e3f8a1".to_string(),
+        java_version: "21".to_string(),
         packages: vec![LockedPackage {
             name: "com.fasterxml.jackson.core:jackson-databind".to_string(),
             version: "2.17.0".to_string(),
@@ -59,6 +61,7 @@ fn lockfile_round_trips_through_toml_with_documented_field_names() {
 
     let serialized = toml::to_string_pretty(&lockfile).expect("should serialize");
     assert!(serialized.contains("manifest-hash"));
+    assert!(serialized.contains("java-version = \"21\""));
     assert!(serialized.contains("resolved-from"));
     assert!(serialized.contains("[[package]]"));
     assert!(serialized.contains("[[request]]"));
@@ -113,8 +116,14 @@ fn build_lockfile_from_mediated_graph() {
         ("com.example:b@2.0.0".to_string(), "sha-b".to_string()),
     ]);
 
-    let lockfile = build_lockfile(&graph, "sha256:xyz".to_string(), &checksums, "default")
-        .expect("should build");
+    let lockfile = build_lockfile(
+        &graph,
+        "sha256:xyz".to_string(),
+        &checksums,
+        "default",
+        "21",
+    )
+    .expect("should build");
 
     assert_eq!(lockfile.manifest_hash, "sha256:xyz");
     assert_eq!(lockfile.packages.len(), 2);
@@ -151,7 +160,13 @@ fn build_lockfile_missing_checksum_is_a_typed_error() {
     let graph = sample_graph();
     let checksums = HashMap::new();
 
-    let result = build_lockfile(&graph, "sha256:xyz".to_string(), &checksums, "default");
+    let result = build_lockfile(
+        &graph,
+        "sha256:xyz".to_string(),
+        &checksums,
+        "default",
+        "21",
+    );
 
     assert!(matches!(result, Err(LockfileError::MissingChecksum(_))));
 }
@@ -171,6 +186,7 @@ fn write_then_read_lockfile_round_trips() {
     let lockfile = Lockfile {
         version: 1,
         manifest_hash: "sha256:roundtrip".to_string(),
+        java_version: "21".to_string(),
         packages: vec![LockedPackage {
             name: "com.example:a".to_string(),
             version: "1.0.0".to_string(),

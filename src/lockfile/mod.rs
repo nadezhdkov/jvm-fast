@@ -42,6 +42,7 @@ pub fn build_lockfile(
     manifest_hash: String,
     checksums: &HashMap<String, String>,
     resolved_from: &str,
+    java_version: &str,
 ) -> Result<Lockfile, LockfileError> {
     let mut node_ids: Vec<_> = graph.nodes.keys().collect();
     node_ids.sort_by_key(|id| id.0);
@@ -88,6 +89,7 @@ pub fn build_lockfile(
     Ok(Lockfile {
         version: 1,
         manifest_hash,
+        java_version: java_version.to_string(),
         packages,
         requests,
     })

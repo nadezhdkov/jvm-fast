@@ -52,4 +52,7 @@ pub enum CliError {
 
     #[error("Java {0} is not installed — run `jvmfast jdk install {0}` first")]
     JavaVersionNotInstalled(String),
+
+    #[error("Java {0} is required by project.toml but is not installed — declined automatic install (pass `--yes` to install non-interactively)")]
+    JdkInstallDeclined(String),
 }

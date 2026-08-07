@@ -40,8 +40,9 @@
 
 - Resolução e download de dependências, com lockfile determinístico
 - Gerenciamento de versões de JDK via Eclipse Temurin — `jdk install`/`jdk
-  list`/`jdk use` já funcionam; resolução de `java-version` do manifesto
-  ainda não (Fase 2 em andamento)
+  list`/`jdk use`, e `[project].java-version` (incl. alias `"lts"`) resolvido
+  e instalado automaticamente (com confirmação, a menos que `--yes`) por
+  `install`/`update` (Fase 2 completa)
 - Compilação e execução direta, sem POM ou build Gradle intermediário
 - Testes via JUnit Platform Console (planejado — Fase 3)
 - Cache global de artefatos, content-addressable
@@ -92,8 +93,8 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/download` | Download paralelo de artefatos via `reqwest`/`tokio` (seção 6.2 passo 6) | Implementado — primeiro código `async` do projeto |
 | `src/maven` | Layout de path Maven (`group/artifact/version/...`) compartilhado entre `pom::http` e `download` | Implementado |
 | `src/resolve` | Orquestra BOMs → exclusions → grafo → mediação (seção 6.2, passos 3–5) | Implementado |
-| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`tree`/`why`/`jdk` (seção 9) | Fase 1 completa; `jdk install`/`jdk list`/`jdk use` implementados (Fase 2 em andamento) |
-| `src/jdk` | Instala JDKs Temurin via API do Adoptium (seção 7) | `install`/`list` implementados — resolução de `java-version` no manifesto ainda não |
+| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`tree`/`why`/`jdk` (seção 9) | Fase 1 e Fase 2 completas — `install`/`update` resolvem e auto-instalam a JDK do projeto |
+| `src/jdk` | Instala JDKs Temurin via API do Adoptium (seção 7) + resolve o alias `"lts"` | Implementado |
 | `src/config` | Leitura/escrita de `[defaults]` em `~/.config/jvmfast/config.toml` (seção 3.5) | Implementado — só `[defaults]`; `[network]`/`[output]` ainda não são lidos |
 
 ---
@@ -141,8 +142,9 @@ cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk list
 cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk use 21
 ```
 
-`build`/`run`/`test` (Fase 3) e resolução de `java-version` no manifesto
-(Fase 2) ainda não existem.
+`install`/`update` já resolvem `[project].java-version` (auto-instalando a
+JDK do projeto, com confirmação a menos que `--yes` seja passado) — só
+`build`/`run`/`test` (Fase 3) ainda não existem.
 
 ---
 
@@ -182,6 +184,7 @@ main-class = "com.exemplo.Main"
 
 ```bash
 jvmfast install                                    # resolve e baixa dependências, gera project.lock
+jvmfast install --yes                               # idem, mas instala a JDK do projeto sem perguntar (CI)
 jvmfast add "com.fasterxml.jackson.core:jackson-databind@2.17.0"
 jvmfast remove "org.slf4j:slf4j-api"
 jvmfast update                                      # re-resolve ignorando o lock existente
@@ -225,7 +228,8 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
 - [x] **Fase 1 completa** — resolução e cache, ponta a ponta
 - [x] Marco — `jvmfast jdk install`/`jdk list`/`jdk use` via API do Adoptium (seção 7)
-- [ ] Fase 2 — resolução de `java-version` no manifesto + alias `"lts"` (em andamento)
+- [x] Marco — resolução de `java-version` no manifesto (incl. alias `"lts"`) em `install`/`update`, persistida em `project.lock`
+- [x] **Fase 2 completa** — gerenciamento de JDK, ponta a ponta
 - [ ] Fase 3 — build e execução
 - [ ] Fase 4 — interoperabilidade (`import-pom`, `import-gradle`)
 - [ ] Fase 5 — workspace e multi-módulo

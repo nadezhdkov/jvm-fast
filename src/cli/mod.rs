@@ -19,7 +19,9 @@ mod why;
 pub use edit::{add_dependency, remove_dependency, ManifestEditError};
 pub use error::CliError;
 pub use install::{add, install, remove, InstallSummary};
-pub use jdk::{install_jdk, list as list_jdks, use_jdk};
+pub use jdk::{
+    ensure_project_jdk, install_jdk, list as list_jdks, resolve_project_java_version, use_jdk,
+};
 pub use tree::format_tree;
 pub use why::format_why;
 
@@ -44,11 +46,20 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Resolve e baixa conforme project.lock (ou gera um se ausente/inválido).
-    Install,
+    Install {
+        /// Instala a JDK do projeto automaticamente sem pedir confirmação
+        /// (seção 7) — para uso em CI.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Regenera project.lock, ignorando a validade do existente.
     Update {
         /// Atualização de uma única coordenada — não suportado ainda.
         coordinate: Option<String>,
+        /// Instala a JDK do projeto automaticamente sem pedir confirmação
+        /// (seção 7) — para uso em CI.
+        #[arg(long)]
+        yes: bool,
     },
     /// Adiciona uma dependência a [dependencies] e resolve.
     Add {
@@ -100,13 +111,17 @@ pub async fn run(cli: Cli) -> std::process::ExitCode {
 
 async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
     match command {
-        Command::Install => install::install(root, false)
+        Command::Install { yes } => install::install(root, false, yes)
             .await
             .map(|s| format_summary(&s)),
         Command::Update {
             coordinate: Some(_),
+            ..
         } => Err(CliError::TargetedUpdateNotSupported),
-        Command::Update { coordinate: None } => install::install(root, true)
+        Command::Update {
+            coordinate: None,
+            yes,
+        } => install::install(root, true, yes)
             .await
             .map(|s| format_summary(&s)),
         Command::Add { coordinate, dev } => install::add(root, &coordinate, dev)

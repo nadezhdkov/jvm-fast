@@ -48,6 +48,11 @@ async fn install_resolves_downloads_and_writes_lockfile_end_to_end() {
 
     let project_dir = temp_dir("project");
     let home_dir = temp_dir("home");
+    // Pré-instala uma JDK 21 "fake" (só o diretório precisa existir —
+    // `jdk::list_installed` não valida conteúdo) para que a resolução de
+    // `[project].java-version = "21"` embutida em `install` não tente
+    // baixar nada da Adoptium real nem pedir confirmação interativa.
+    std::fs::create_dir_all(home_dir.join(".cache/jvmfast/jdks/21.0.1-tem")).unwrap();
     let manifest = format!(
         "[project]\nname = \"demo-project\"\nversion = \"0.1.0\"\njava-version = \"21\"\n\n\
          [dependencies]\n\"com.example:demo\" = \"1.0.0\"\n\n\
@@ -59,7 +64,7 @@ async fn install_resolves_downloads_and_writes_lockfile_end_to_end() {
     let previous_home = std::env::var_os("HOME");
     std::env::set_var("HOME", &home_dir);
 
-    let result = install(&project_dir, false).await;
+    let result = install(&project_dir, false, false).await;
 
     match previous_home {
         Some(value) => std::env::set_var("HOME", value),
@@ -76,6 +81,7 @@ async fn install_resolves_downloads_and_writes_lockfile_end_to_end() {
         std::fs::read_to_string(project_dir.join("project.lock")).expect("lock should exist");
     assert!(lockfile_contents.contains("com.example:demo"));
     assert!(lockfile_contents.contains(&sha256));
+    assert!(lockfile_contents.contains("java-version = \"21\""));
 
     let cached_jar = home_dir
         .join(".cache/jvmfast/artifacts/sha256")
@@ -90,7 +96,7 @@ async fn install_resolves_downloads_and_writes_lockfile_end_to_end() {
     // resolução inteira (seção 6.2 passo 2) e só constatar que o artefato
     // já está em cache.
     std::env::set_var("HOME", &home_dir);
-    let second = install(&project_dir, false).await;
+    let second = install(&project_dir, false, false).await;
     std::env::remove_var("HOME");
     let second_summary = second.expect("second install should succeed");
     assert!(second_summary.reused_lockfile);

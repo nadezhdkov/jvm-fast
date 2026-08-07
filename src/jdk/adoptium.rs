@@ -37,6 +37,11 @@ struct VersionInfo {
     security: u32,
 }
 
+#[derive(Deserialize)]
+struct AvailableReleases {
+    most_recent_lts: u32,
+}
+
 /// Cliente da API pública do Eclipse Temurin/Adoptium
 /// (`https://api.adoptium.net`) — a única distribuição que a seção 7
 /// documenta ("Distribuição padrão: Eclipse Temurin"). O formato da
@@ -111,5 +116,42 @@ impl AdoptiumClient {
             checksum: entry.binary.package.checksum,
             filename: entry.binary.package.name,
         })
+    }
+
+    /// GET `/v3/info/available_releases` — usado só para resolver o alias
+    /// `"lts"` (seção 3) para uma major version concreta. Assumido a partir
+    /// da documentação pública da API v3, mesma ressalva de honestidade que
+    /// `latest_release`.
+    pub async fn most_recent_lts(&self) -> Result<u32, JdkError> {
+        let url = format!(
+            "{}/v3/info/available_releases",
+            self.base_url.trim_end_matches('/'),
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|source| JdkError::Request {
+                url: url.clone(),
+                source,
+            })?;
+
+        if !response.status().is_success() {
+            return Err(JdkError::Status {
+                url,
+                status: response.status().as_u16(),
+            });
+        }
+
+        let body = response.text().await.map_err(|source| JdkError::Request {
+            url: url.clone(),
+            source,
+        })?;
+
+        let releases: AvailableReleases =
+            serde_json::from_str(&body).map_err(|source| JdkError::Parse { url, source })?;
+        Ok(releases.most_recent_lts)
     }
 }

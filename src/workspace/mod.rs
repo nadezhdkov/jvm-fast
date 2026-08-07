@@ -34,9 +34,14 @@ pub fn load_workspace(root: &Path) -> Result<Workspace, WorkspaceLoadError> {
     let manifest_hash = compute_manifest_hash([manifest_contents.as_str()]);
 
     let lockfile_path = root.join("project.lock");
+    // `java_version` fica vazio nesse sentinela de "nunca resolvido" — nunca
+    // é lido nesse estado, já que quem orquestra a resolução (`crate::cli`)
+    // decide se o lock é reaproveitável olhando a existência do arquivo em
+    // disco, não este valor fabricado.
     let lockfile = read_lockfile(&lockfile_path)?.unwrap_or_else(|| Lockfile {
         version: 1,
         manifest_hash,
+        java_version: String::new(),
         packages: Vec::new(),
         requests: Vec::new(),
     });

@@ -41,7 +41,7 @@ fn load_workspace_loads_existing_lockfile_from_disk() {
     std::fs::write(dir.join("project.toml"), MINIMAL_MANIFEST).unwrap();
     std::fs::write(
         dir.join("project.lock"),
-        "version = 1\nmanifest-hash = \"sha256:stale\"\n",
+        "version = 1\nmanifest-hash = \"sha256:stale\"\njava-version = \"21\"\n",
     )
     .unwrap();
 

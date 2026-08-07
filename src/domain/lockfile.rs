@@ -8,6 +8,14 @@ pub struct Lockfile {
     pub version: u32,
     #[serde(rename = "manifest-hash")]
     pub manifest_hash: String,
+    /// Major version da JDK efetivamente selecionada na resolução (seção 3,
+    /// seção 7) — sempre concreta (`"21"`), nunca o alias `"lts"`: se
+    /// `[project].java-version` no manifesto for `"lts"`, esta é a versão
+    /// LTS mais recente no momento em que o lock foi gerado, gravada aqui
+    /// para que builds seguintes não troquem de JDK silenciosamente quando
+    /// uma nova LTS for lançada — só `jvmfast update` reavalia o alias.
+    #[serde(rename = "java-version")]
+    pub java_version: String,
     #[serde(rename = "package", default)]
     pub packages: Vec<LockedPackage>,
     #[serde(rename = "request", default)]

@@ -22,3 +22,20 @@ pub fn parse_major_version(spec: &str) -> Result<&str, JdkError> {
         Err(JdkError::ExactVersionNotSupported(spec.to_string()))
     }
 }
+
+/// Resolve `[project].java-version` (seção 3) para uma major version
+/// concreta — `"21"` passa direto por `parse_major_version`; o alias
+/// `"lts"` consulta a Adoptium para saber qual é a LTS mais recente *agora*.
+/// Só chamado quando o lock está de fato sendo (re)gerado — uma vez
+/// resolvido, o valor concreto é persistido em `Lockfile.java_version`
+/// (seção 4) e reaproveitado sem nova consulta enquanto o lock for válido.
+pub async fn resolve_feature_version(
+    spec: &str,
+    adoptium: &AdoptiumClient,
+) -> Result<String, JdkError> {
+    if spec == "lts" {
+        Ok(adoptium.most_recent_lts().await?.to_string())
+    } else {
+        parse_major_version(spec).map(str::to_string)
+    }
+}

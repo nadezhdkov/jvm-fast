@@ -8,19 +8,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 complete.** The `jvmfast` binary resolves `project.toml`, downloads
 artifacts over real HTTP, and writes/reads `project.lock`, end to end, via
 `install`/`update`/`add`/`remove`/`tree`/`why`. **Fase 2 (JDK management,
-seção 7) is in progress**: `jvmfast jdk install <major>`/`jdk list`/`jdk
-use` all work end to end against the real Eclipse Temurin/Adoptium API and
-a real (if narrowly-scoped) `~/.config/jvmfast/config.toml` — wiring
-`java-version` resolution from `project.toml` into `install`/`run`/`build`
-is not started yet. Fase 3 (build/run/test) and Fase 4 (interop) are
+seção 7) is complete**: `jvmfast jdk install <major>`/`jdk list`/`jdk use`
+all work end to end against the real Eclipse Temurin/Adoptium API and a
+real (if narrowly-scoped) `~/.config/jvmfast/config.toml`; `[project].java-
+version` (including the `"lts"` alias) is now resolved and auto-installed
+(with interactive confirmation unless `--yes`) as part of `jvmfast
+install`/`update`, and the concrete resolved version is persisted in
+`project.lock` (`Lockfile.java_version`) so the alias doesn't silently
+re-resolve on every build. Fase 3 (build/run/test) and Fase 4 (interop) are
 **not started** — `docs/architecture.md` seção 12 and the roadmap below are
 the spec to implement against for those. See "Roadmap" below for the
 specific gaps left inside Fase 1 (targeted `update <coord>`, `add` without
 an explicit version, dev-dependencies, multi-repository fallback, per-host
 download throttling) and Fase 2 (exact-version JDK install, listing
-*available* (not just installed) JDKs, manifest `java-version` resolution,
-the `"lts"` alias, and global `config.toml` beyond `[defaults]`) — each is
-a typed, rejected-not-faked error today, not silent scope creep.
+*available* (not just installed) JDKs, and global `config.toml` beyond
+`[defaults]`) — each is a typed, rejected-not-faked error today, not silent
+scope creep.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -104,7 +107,7 @@ a typed, rejected-not-faked error today, not silent scope creep.
   (`format_tree`/`format_why`) over an in-memory `DependencyGraph`, fully
   unit-tested without I/O.
 
-**Fase 2 (JDK management, seção 7) — in progress**:
+**Fase 2 (JDK management, seção 7) — complete**:
 
 - `src/jdk/` — `AdoptiumClient::latest_release` queries the real Eclipse
   Temurin/Adoptium public API (`https://api.adoptium.net`, seção 7:
@@ -140,7 +143,24 @@ a typed, rejected-not-faked error today, not silent scope creep.
   `[defaults].java-version`, if any), and `jdk use <major>` (writes
   `[defaults].java-version` — rejects a major version that isn't installed
   yet via `CliError::JavaVersionNotInstalled`, since pointing the default
-  at nothing would be a silent inconsistent state).
+  at nothing would be a silent inconsistent state). Also
+  `resolve_project_java_version`/`ensure_project_jdk` (seção 7): resolve
+  `[project].java-version` (via `manifest::parse_java_version` +
+  `jdk::resolve_feature_version`, which hits Adoptium's
+  `/v3/info/available_releases` only for the `"lts"` alias) and make sure
+  that JDK is installed, prompting for confirmation on stdin unless
+  `yes=true` (`--yes`, wired from `Command::Install`/`Command::Update`) —
+  declining returns `CliError::JdkInstallDeclined`. `cli::install::install`
+  calls `resolve_project_java_version` when actually (re)generating the
+  lock (so `"lts"` gets resolved fresh) and `ensure_project_jdk` with the
+  already-persisted `Lockfile.java_version` when reusing a valid lock (so
+  the alias is *not* re-resolved on every build, per seção 3's
+  documented rule — only `jvmfast update` reassesses it). `add`/`remove`
+  always behave as `--yes` for this step, since blocking a dependency edit
+  on an interactive JDK prompt would be surprising.
+- `src/domain/lockfile.rs` — `Lockfile` gained a `java-version` field (the
+  concrete major version selected at resolution time, never the `"lts"`
+  alias itself); `lockfile::build_lockfile` takes it as a parameter.
 
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
@@ -179,30 +199,34 @@ shortcuts):
   version, not just latest; not implemented.
 - `jvmfast jdk use` requires the target major version to already be
   installed (`CliError::JavaVersionNotInstalled` otherwise) — it never
-  triggers an install itself, unlike the auto-install-with-confirmation
-  behavior seção 7 describes for manifest `java-version` resolution (which
-  doesn't exist yet, see below).
-- Nothing resolves `[project].java-version` from `project.toml` yet —
-  `install`/`run`/`build` don't select or invoke a JDK at all. Nor does the
-  `"lts"` alias get resolved-and-pinned into `project.lock`; the current
-  `Lockfile` schema (`src/domain/lockfile.rs`) doesn't even have a field
-  for it — seção 4's own example TOML doesn't show one either, so this is
-  an additive schema extension still to design, not an oversight to just
-  wire up.
+  triggers an install itself, unlike `install`/`update`'s
+  auto-install-with-confirmation behavior (seção 7) for manifest
+  `java-version` resolution.
+- `resolve_project_java_version`/`ensure_project_jdk` hardcode
+  `cli::context::ADOPTIUM_API` (the real `api.adoptium.net`), same as
+  `install_jdk` — there's no injection point to point them at a mock
+  server from a *public*-API test, so (like `tests/cli_jdk.rs` already
+  does for `install_jdk`) exercising them end to end means calling the
+  lower-level `jdk::resolve_feature_version`/`jdk::install` directly
+  against a mock, not `cli::install`/`cli::jdk::resolve_project_java_version`
+  itself. Automated tests cover `install()`'s two call sites (fresh
+  resolve vs. reused-lock) only via a pre-installed fake JDK directory, so
+  neither path needs a real network call to pass.
+- The interactive decline branch of `ensure_project_jdk` (stdin prompt,
+  `CliError::JdkInstallDeclined`) has no automated test — blocking a test
+  binary on real stdin is unsafe in this environment (could hang instead
+  of failing fast), so that branch is exercised by code review/manual
+  testing only, not `cargo test`.
 - Windows isn't supported — `jdk::current_platform` only maps
   Linux/macOS × x86_64/aarch64, matching `cache::cache_root()`'s existing
   Unix-only stance.
 
-Next milestones, in order — rest of **Fase 2** (seção 7): `java-version`
-resolution wired into `install` (selects the project's JDK, auto-installs
-with confirmation unless `--yes`, per seção 7) → the `"lts"`
-alias-to-concrete-version-at-first-resolve rule, persisted in an extended
-`Lockfile` schema → **Fase 3** (build/run/test,
-seção 8): `jvmfast build`/`run`/`test`, `javac` compilation using the
-resolved JDK, JUnit Platform Console integration → credentials/auth
+Next milestones, in order — **Fase 3** (build/run/test, seção 8):
+`jvmfast build`/`run`/`test`, `javac` compilation using the now-resolved
+project JDK, JUnit Platform Console integration → credentials/auth
 (seção 3.2) → global `config.toml` loading (seção 3.5, overrides
-`WorkspaceConfig::default()`) → the gaps listed above, each independently
-pickable.
+`WorkspaceConfig::default()`) → the Fase 1/Fase 2 gaps listed above, each
+independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — already binding, not just
 future work: resolution must always operate on `Workspace.modules: Vec<Module>`,

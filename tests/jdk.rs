@@ -3,7 +3,10 @@ mod support;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use jvmfast::cache::hash_bytes;
-use jvmfast::jdk::{install, is_installed, list_installed, parse_major_version, AdoptiumClient};
+use jvmfast::jdk::{
+    install, is_installed, list_installed, parse_major_version, resolve_feature_version,
+    AdoptiumClient,
+};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -57,6 +60,12 @@ fn start_adoptium_mock(archive: Vec<u8>, checksum: String) -> support::MockHttpS
             (200, body.into_bytes())
         } else if path == "/download/jdk.tar.gz" {
             (200, archive.clone())
+        } else if path == "/v3/info/available_releases" {
+            (
+                200,
+                br#"{"available_releases":[17,21,24],"available_lts_releases":[17,21],"most_recent_lts":21,"most_recent_feature_release":24}"#
+                    .to_vec(),
+            )
         } else {
             (404, Vec::new())
         }
@@ -183,6 +192,64 @@ fn parse_major_version_accepts_digits_only() {
 #[test]
 fn parse_major_version_rejects_exact_pinned_version() {
     let result = parse_major_version("21.0.2-tem");
+
+    assert!(matches!(
+        result,
+        Err(jvmfast::jdk::JdkError::ExactVersionNotSupported(_))
+    ));
+}
+
+#[tokio::test]
+async fn adoptium_client_reports_most_recent_lts() {
+    let archive = fake_jdk_tar_gz("jdk-21.0.2+13");
+    let checksum = hash_bytes(&archive);
+    let server = start_adoptium_mock(archive, checksum);
+
+    let adoptium = AdoptiumClient::new(server.base_url.clone());
+    let most_recent_lts = adoptium
+        .most_recent_lts()
+        .await
+        .expect("should fetch available releases");
+
+    assert_eq!(most_recent_lts, 21);
+}
+
+#[tokio::test]
+async fn resolve_feature_version_passes_through_plain_major_version() {
+    let archive = fake_jdk_tar_gz("jdk-21.0.2+13");
+    let checksum = hash_bytes(&archive);
+    let server = start_adoptium_mock(archive, checksum);
+    let adoptium = AdoptiumClient::new(server.base_url.clone());
+
+    let resolved = resolve_feature_version("21", &adoptium)
+        .await
+        .expect("should resolve");
+
+    assert_eq!(resolved, "21");
+}
+
+#[tokio::test]
+async fn resolve_feature_version_resolves_lts_alias_via_adoptium() {
+    let archive = fake_jdk_tar_gz("jdk-21.0.2+13");
+    let checksum = hash_bytes(&archive);
+    let server = start_adoptium_mock(archive, checksum);
+    let adoptium = AdoptiumClient::new(server.base_url.clone());
+
+    let resolved = resolve_feature_version("lts", &adoptium)
+        .await
+        .expect("should resolve alias");
+
+    assert_eq!(resolved, "21");
+}
+
+#[tokio::test]
+async fn resolve_feature_version_rejects_exact_pinned_version() {
+    let archive = fake_jdk_tar_gz("jdk-21.0.2+13");
+    let checksum = hash_bytes(&archive);
+    let server = start_adoptium_mock(archive, checksum);
+    let adoptium = AdoptiumClient::new(server.base_url.clone());
+
+    let result = resolve_feature_version("21.0.2-tem", &adoptium).await;
 
     assert!(matches!(
         result,
