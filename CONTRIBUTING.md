@@ -135,6 +135,20 @@ internal crates) — the "crate structure" question doesn't apply yet.
 ready for if/when the project splits into a multi-crate workspace, but that split isn't decided,
 so `cargo-depgraph` and friends have nothing to visualize right now.
 
+### gradle-bridge
+
+[`gradle-bridge/`](gradle-bridge/) is the one non-Rust, non-Cargo component in the repo — a
+standalone Gradle project (own `build.gradle.kts`, own `gradlew`, own CI job) backing `jvmfast
+import-gradle` (see [`gradle-bridge/README.md`](gradle-bridge/README.md) and CLAUDE.md's Fase 4
+writeup). `cargo build`/`cargo test` never touch it — build and test it independently:
+
+```shell
+cd gradle-bridge
+./gradlew build
+```
+
+Requires a JDK on `PATH` (any JDK 17+), same as the Fase 3 test suites above.
+
 ## Domain conventions
 
 - Domain errors are typed (`thiserror`), never `anyhow` or a generic `String`.

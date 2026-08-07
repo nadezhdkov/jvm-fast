@@ -61,9 +61,19 @@ equivalent — `provided`/`system`-scoped dependencies, unresolved
 properties, `<profiles>`, `<build><plugins>`, repositories beyond the
 first — is skipped from the generated manifest and surfaced as a report
 note instead of silently dropped or guessed. `jvmfast import-gradle`
-(Tooling API bridge, seção 10) is **not started** — `docs/architecture.md`
-seção 10 and the roadmap below are the spec to implement against for it.
-See "Roadmap" below for the specific gaps left
+(Tooling API bridge, seção 10) has its JVM-side skeleton started —
+[`gradle-bridge/`](gradle-bridge/) is a standalone Gradle project
+(own build, own `gradlew`, own CI job) with a
+`JvmfastModelBuilderPlugin`/`JvmfastModelBuilder` that registers against a
+target build's `ToolingModelBuilderRegistry`, plus the
+`JvmfastDependencyModel`/`JvmfastModule`/`JvmfastDependency` typed model
+shape — but nothing resolves real dependencies yet
+(`JvmfastModelBuilder.buildAll` throws `UnsupportedOperationException`)
+and nothing on the Rust side invokes it (no init-script generation, no
+driver, no `jvmfast import-gradle` CLI command). See the Fase 4 writeup
+below for the full breakdown. `docs/architecture.md` seção 10 and the
+roadmap below are the spec to implement the rest against. See "Roadmap"
+below for the specific gaps left
 inside Fase 1 (targeted `update <coord>`, `add` without an explicit
 version, editing `[dev-dependencies]` from the CLI, multi-repository
 fallback, per-host download throttling), Fase 2 (exact-version JDK
@@ -346,8 +356,8 @@ typed, rejected-not-faked error today, not silent scope creep.
   resolution itself is exercised by the same mock-server-backed pattern
   `cli::install` already uses, not duplicated here).
 
-**Fase 4 (interop, seção 10) — `import-pom` started, `import-gradle` not
-started**:
+**Fase 4 (interop, seção 10) — `import-pom` implemented, `import-gradle`
+JVM-side skeleton started**:
 
 - `src/pom/xml.rs` — extended (not rewritten) to also capture
   `<project><artifactId>`/`<version>` (direct only, no `<parent>`
@@ -427,12 +437,49 @@ started**:
   range-translation boundary and `tests/cli_import.rs` for the CLI wiring
   (default path, explicit path, already-exists rejection, report
   formatting).
-- `jvmfast import-gradle` (Tooling API bridge, `jvmfast-gradle-bridge.jar`,
-  seção 10) is entirely **not started** — no JVM helper artifact, no
-  init-script generation, no bridge invocation. This is a materially
-  bigger undertaking than `import-pom` (a new packaged JVM component with
-  its own build/versioning, per seção 10's own "custo assumido
-  conscientemente" writeup), not attempted as part of this pass.
+- [`gradle-bridge/`](gradle-bridge/) (new, non-Rust, standalone Gradle
+  project — own `build.gradle.kts`, own `gradlew`, own CI job at
+  `.github/workflows/gradle-bridge.yml` triggered only on changes under
+  this directory) — the JVM-side skeleton for `jvmfast import-gradle`
+  (Tooling API bridge, seção 10). Contains:
+  - `dev.jvmfast.gradlebridge.model.{JvmfastDependencyModel,JvmfastModule,JvmfastDependency}`
+    — the typed model shape both sides of the Tooling API exchange (the
+    plugin running inside the target build, and jvmfast's own driver on
+    the client side, not implemented yet) are meant to agree on. Plain
+    `Serializable` interfaces, no implementation classes yet since nothing
+    constructs real instances.
+  - `JvmfastModelBuilderPlugin` — a `Plugin<Project>` that takes a
+    `ToolingModelBuilderRegistry` via constructor injection (Gradle
+    provides it; the plugin never looks it up from `project` itself) and
+    registers `JvmfastModelBuilder` against it — this is the class the
+    init-script jvmfast will generate (seção 10 step 1) is meant to apply.
+  - `JvmfastModelBuilder` — implements `ToolingModelBuilder`;
+    `canBuild` recognizes `JvmfastDependencyModel`'s class name;
+    `buildAll` throws `UnsupportedOperationException` rather than a
+    fabricated/empty model — walking `project.getConfigurations()` to
+    populate a real one is deliberately deferred (see gaps below).
+  - Deliberately **not** in this pass, per the "escopo reduzido" scope
+    agreed before starting: init-script generation, the Tooling API
+    *client*-side connection code (`GradleConnector.forProjectDirectory`,
+    requesting the model, JSON serialization — none of `gradle-tooling-api`
+    is even a dependency yet, only `gradleApi()` for the plugin/model-
+    builder side), any Rust-side invocation, and `jvmfast import-gradle`
+    as a CLI command. This is real, tested infrastructure for one half of
+    the mechanism (the plugin/model side), not a stub — but only half.
+  - No Gradle toolchain auto-provisioning (`java.toolchain {}`) —
+    `sourceCompatibility`/`targetCompatibility` are pinned to 17 instead,
+    since toolchain auto-download needs network access to a toolchain
+    repository that isn't guaranteed available; whatever JDK invokes
+    `./gradlew` compiles it directly.
+  - Tested with plain JUnit 5 — `JvmfastModelBuilderTest` (canBuild/
+    buildAll-throws) needs no Gradle project context at all;
+    `JvmfastModelBuilderPluginTest` verifies registration against a
+    hand-written fake `ToolingModelBuilderRegistry` (recording what got
+    registered) rather than a real Gradle `Project` via `ProjectBuilder` —
+    the plugin never dereferences its `Project` argument, so a real
+    project fixture would test nothing extra here. Verified building/
+    testing for real with the Gradle 9.6.1 installed in this environment
+    (`./gradlew build`), not just written and assumed to compile.
 
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
@@ -597,9 +644,26 @@ shortcuts):
 
 **Known, deliberate gaps inside Fase 4 so far**:
 
-- `jvmfast import-gradle` doesn't exist at all yet — see the writeup above;
-  everything Gradle-related in seção 10 (Tooling API bridge, mediation
-  divergence warning, multi-project iteration) is still just spec.
+- `jvmfast import-gradle` as a command doesn't exist yet — only
+  `gradle-bridge/`'s plugin/model-builder registration skeleton does (see
+  the writeup above). Still entirely unimplemented: init-script
+  generation, the Tooling API client-side connection
+  (`GradleConnector`/`ProjectConnection`, not even a dependency on
+  `gradle-tooling-api` yet), JSON serialization of the model, invoking the
+  bridge jar as a subprocess from Rust, parsing its output into
+  `project.toml`, the mediation-divergence warning seção 10 documents, and
+  multi-project iteration.
+- `JvmfastModelBuilder.buildAll` throws `UnsupportedOperationException`
+  unconditionally — walking `project.getConfigurations()` (`compileClasspath`/
+  `runtimeClasspath`/`testCompileClasspath`) to populate a real
+  `JvmfastDependencyModel` is not implemented; there's no model
+  implementation classes (`DefaultJvmfastModule`/etc.) yet either, only
+  the interfaces.
+- `gradle-bridge/` isn't packaged/embedded into the `jvmfast` binary or
+  its release artifacts in any way — it's a buildable, tested Gradle
+  project living in the repo, not yet something `cargo build`/the release
+  process bundles alongside `jvmfast` the way seção 10 describes ("um
+  helper JVM empacotado com o jvmfast").
 - `import-pom` never follows `<parent>` POM inheritance — a POM whose
   `<artifactId>`/`<version>`/properties/dependency versions come from a
   parent (extremely common in real multi-module Maven projects) fails
@@ -647,8 +711,10 @@ that lean on it (e.g. `com.google.guava:guava`'s own
 `import-pom`'s own parent-inheritance gap above) — worth calling out as a
 candidate for a future pick, though not promised or started here.
 `jvmfast import-gradle` (Tooling API bridge) is the next natural pick to
-finish out Fase 4, but is a materially bigger, separately-scoped
-undertaking (a new packaged JVM component, seção 10) — not started.
+finish out Fase 4 — its JVM-side plugin/model-builder skeleton
+(`gradle-bridge/`) now exists and is tested, but the Tooling API
+client-side connection, init-script generation, the Rust-side driver, and
+the CLI command itself are all still unstarted (see gaps above).
 Also pending: `jvmfast init` (seção 9.2) → credentials/auth (seção 3.2) →
 global `config.toml` loading (seção 3.5, overrides
 `WorkspaceConfig::default()`) → the rest of the Fase 1/Fase 2/Fase 3/Fase 4
