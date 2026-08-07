@@ -29,6 +29,15 @@ pub fn parse_repositories(path: &Path) -> Result<HashMap<String, String>, Manife
     Ok(parse_manifest(path)?.repositories)
 }
 
+/// `[project].java-version` (seção 3) — mesmo raciocínio de
+/// `parse_repositories`: `Module` (seção 3.1) não tem campo para isso, é
+/// configuração de qual JDK usar, não intenção de dependências. Devolve a
+/// string crua (`"21"`, `"lts"`) sem resolver — isso é `jdk::resolve_*`
+/// (seção 7), que sabe interpretar o alias `"lts"`.
+pub fn parse_java_version(path: &Path) -> Result<String, ManifestError> {
+    Ok(parse_manifest(path)?.project.java_version)
+}
+
 fn parse_manifest(path: &Path) -> Result<dto::ProjectManifest, ManifestError> {
     let contents = std::fs::read_to_string(path).map_err(|e| ManifestError::Io {
         path: path.to_path_buf(),

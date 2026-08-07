@@ -1,5 +1,6 @@
 use super::lockfile::Lockfile;
 use super::module::Module;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// O único ponto de entrada de resolução (docs/architecture.md seção 3.1,
@@ -26,10 +27,16 @@ pub struct WorkspaceConfig {
 
 /// Sem default documentado na seção 3.5 para `java-version`/`repository` —
 /// são preferências do usuário, nunca inventadas por nós; `None` é a
-/// ausência honesta de override, não um valor fabricado.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// ausência honesta de override, não um valor fabricado. Deriva
+/// `Serialize`/`Deserialize` porque `config::load_defaults`/`jdk use`
+/// (marco de `jdk use`) leem e escrevem exatamente esta seção de
+/// `~/.config/jvmfast/config.toml` — o resto do arquivo (`[network]`,
+/// `[output]`) ainda não é lido por ninguém.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct DefaultsConfig {
+    #[serde(rename = "java-version", skip_serializing_if = "Option::is_none")]
     pub java_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
 }
 

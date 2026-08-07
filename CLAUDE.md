@@ -8,17 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 complete.** The `jvmfast` binary resolves `project.toml`, downloads
 artifacts over real HTTP, and writes/reads `project.lock`, end to end, via
 `install`/`update`/`add`/`remove`/`tree`/`why`. **Fase 2 (JDK management,
-seção 7) is in progress**: `jvmfast jdk install <major>`/`jvmfast jdk list`
-work end to end against the real Eclipse Temurin/Adoptium API — `jvmfast
-jdk use` and wiring `java-version` resolution into `install`/`run`/`build`
-are not started yet. Fase 3 (build/run/test) and Fase 4 (interop) are
+seção 7) is in progress**: `jvmfast jdk install <major>`/`jdk list`/`jdk
+use` all work end to end against the real Eclipse Temurin/Adoptium API and
+a real (if narrowly-scoped) `~/.config/jvmfast/config.toml` — wiring
+`java-version` resolution from `project.toml` into `install`/`run`/`build`
+is not started yet. Fase 3 (build/run/test) and Fase 4 (interop) are
 **not started** — `docs/architecture.md` seção 12 and the roadmap below are
 the spec to implement against for those. See "Roadmap" below for the
 specific gaps left inside Fase 1 (targeted `update <coord>`, `add` without
 an explicit version, dev-dependencies, multi-repository fallback, per-host
-download throttling) and Fase 2 (exact-version JDK install, `jdk use`,
-manifest `java-version` resolution, the `"lts"` alias) — each is a typed,
-rejected-not-faked error today, not silent scope creep.
+download throttling) and Fase 2 (exact-version JDK install, listing
+*available* (not just installed) JDKs, manifest `java-version` resolution,
+the `"lts"` alias, and global `config.toml` beyond `[defaults]`) — each is
+a typed, rejected-not-faked error today, not silent scope creep.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -119,8 +121,26 @@ rejected-not-faked error today, not silent scope creep.
   verified against production (no outbound network access in this
   environment), same caveat as `pom::HttpPomProvider`'s Maven-layout
   assumption in Fase 1.
-- `src/cli/jdk.rs` — wires `jvmfast jdk install <major>` and `jvmfast jdk
-  list` to the above.
+- `src/config/` — `load_defaults`/`write_default_java_version` read/write
+  just the `[defaults]` table of `~/.config/jvmfast/config.toml` (seção
+  3.5), via `domain::DefaultsConfig` (now `Serialize`/`Deserialize`, kebab-
+  case `java-version`) — `write_default_java_version` edits in place via
+  `toml_edit`, same non-destructive discipline as `cli::edit` for
+  `project.toml`. **Narrower than seção 3.5 as a whole**: `[network]`/
+  `[output]` aren't read by anyone yet, and `workspace::load_workspace`
+  still only uses `WorkspaceConfig::default()` — overlaying the full
+  documented precedence chain (CLI flags → env → project.toml →
+  config.toml → hardcoded defaults) is a separate, bigger milestone.
+- `manifest::parse_java_version` — reads `[project].java-version` straight
+  from `project.toml`, same pattern as `parse_repositories` (`Module`,
+  seção 3.1, has no field for it either; this is resolution *configuration*,
+  not dependency *declaration*).
+- `src/cli/jdk.rs` — wires `jvmfast jdk install <major>`, `jdk list`
+  (marks which installed version matches the configured
+  `[defaults].java-version`, if any), and `jdk use <major>` (writes
+  `[defaults].java-version` — rejects a major version that isn't installed
+  yet via `CliError::JavaVersionNotInstalled`, since pointing the default
+  at nothing would be a silent inconsistent state).
 
 **Known, deliberate gaps inside Fase 1** (typed errors, not silent
 shortcuts):
@@ -157,9 +177,11 @@ shortcuts):
 - `jvmfast jdk list` only lists *installed* JDKs — listing what's
   *available* to install would mean enumerating every release per major
   version, not just latest; not implemented.
-- `jvmfast jdk use` (set the global default JDK) doesn't exist yet — needs
-  the `[defaults].java-version` write path into `~/.config/jvmfast/config.toml`
-  (seção 3.5), which nothing reads or writes yet.
+- `jvmfast jdk use` requires the target major version to already be
+  installed (`CliError::JavaVersionNotInstalled` otherwise) — it never
+  triggers an install itself, unlike the auto-install-with-confirmation
+  behavior seção 7 describes for manifest `java-version` resolution (which
+  doesn't exist yet, see below).
 - Nothing resolves `[project].java-version` from `project.toml` yet —
   `install`/`run`/`build` don't select or invoke a JDK at all. Nor does the
   `"lts"` alias get resolved-and-pinned into `project.lock`; the current
@@ -171,12 +193,11 @@ shortcuts):
   Linux/macOS × x86_64/aarch64, matching `cache::cache_root()`'s existing
   Unix-only stance.
 
-Next milestones, in order — rest of **Fase 2** (seção 7): `jvmfast jdk use`
-plus minimal `[defaults].java-version` read/write in
-`~/.config/jvmfast/config.toml` → `java-version` resolution wired into
-`install` (selects/auto-installs the project's JDK, `--yes` for
-non-interactive) → the `"lts"` alias-to-concrete-version-at-first-resolve
-rule, persisted in an extended `Lockfile` schema → **Fase 3** (build/run/test,
+Next milestones, in order — rest of **Fase 2** (seção 7): `java-version`
+resolution wired into `install` (selects the project's JDK, auto-installs
+with confirmation unless `--yes`, per seção 7) → the `"lts"`
+alias-to-concrete-version-at-first-resolve rule, persisted in an extended
+`Lockfile` schema → **Fase 3** (build/run/test,
 seção 8): `jvmfast build`/`run`/`test`, `javac` compilation using the
 resolved JDK, JUnit Platform Console integration → credentials/auth
 (seção 3.2) → global `config.toml` loading (seção 3.5, overrides

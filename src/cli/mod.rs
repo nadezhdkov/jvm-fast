@@ -19,6 +19,7 @@ mod why;
 pub use edit::{add_dependency, remove_dependency, ManifestEditError};
 pub use error::CliError;
 pub use install::{add, install, remove, InstallSummary};
+pub use jdk::{install_jdk, list as list_jdks, use_jdk};
 pub use tree::format_tree;
 pub use why::format_why;
 
@@ -75,6 +76,8 @@ pub enum JdkCommand {
     Install { version: String },
     /// Lista as JDKs instaladas.
     List,
+    /// Define a JDK default global (já precisa estar instalada).
+    Use { version: String },
 }
 
 /// Ponto de entrada único, chamado por `main.rs` dentro de um runtime
@@ -133,6 +136,9 @@ async fn dispatch(root: &Path, command: Command) -> Result<String, CliError> {
         Command::Jdk {
             action: JdkCommand::List,
         } => jdk::list(),
+        Command::Jdk {
+            action: JdkCommand::Use { version },
+        } => jdk::use_jdk(&version),
     }
 }
 

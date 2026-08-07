@@ -39,9 +39,9 @@
 ## Visão Geral
 
 - Resolução e download de dependências, com lockfile determinístico
-- Gerenciamento de versões de JDK via Eclipse Temurin — `jdk install`/`jdk list`
-  já funcionam; `jdk use` e resolução de `java-version` no manifesto ainda
-  não (Fase 2 em andamento)
+- Gerenciamento de versões de JDK via Eclipse Temurin — `jdk install`/`jdk
+  list`/`jdk use` já funcionam; resolução de `java-version` do manifesto
+  ainda não (Fase 2 em andamento)
 - Compilação e execução direta, sem POM ou build Gradle intermediário
 - Testes via JUnit Platform Console (planejado — Fase 3)
 - Cache global de artefatos, content-addressable
@@ -92,8 +92,9 @@ Detalhamento completo em [`docs/architecture.md`](docs/architecture.md).
 | `src/download` | Download paralelo de artefatos via `reqwest`/`tokio` (seção 6.2 passo 6) | Implementado — primeiro código `async` do projeto |
 | `src/maven` | Layout de path Maven (`group/artifact/version/...`) compartilhado entre `pom::http` e `download` | Implementado |
 | `src/resolve` | Orquestra BOMs → exclusions → grafo → mediação (seção 6.2, passos 3–5) | Implementado |
-| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`tree`/`why`/`jdk` (seção 9) | Fase 1 completa; `jdk install`/`jdk list` implementados (Fase 2 em andamento) |
-| `src/jdk` | Instala JDKs Temurin via API do Adoptium (seção 7) | `install`/`list` implementados — `use` e resolução de `java-version` ainda não |
+| `src/cli` | Comandos `install`/`update`/`add`/`remove`/`tree`/`why`/`jdk` (seção 9) | Fase 1 completa; `jdk install`/`jdk list`/`jdk use` implementados (Fase 2 em andamento) |
+| `src/jdk` | Instala JDKs Temurin via API do Adoptium (seção 7) | `install`/`list` implementados — resolução de `java-version` no manifesto ainda não |
+| `src/config` | Leitura/escrita de `[defaults]` em `~/.config/jvmfast/config.toml` (seção 3.5) | Implementado — só `[defaults]`; `[network]`/`[output]` ainda não são lidos |
 
 ---
 
@@ -137,10 +138,11 @@ cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- install
 ```bash
 cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk install 21
 cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk list
+cargo run --manifest-path /caminho/do/jvm-fast/Cargo.toml -- jdk use 21
 ```
 
-`build`/`run`/`test` (Fase 3) e `jdk use`/resolução de `java-version` no
-manifesto (Fase 2) ainda não existem.
+`build`/`run`/`test` (Fase 3) e resolução de `java-version` no manifesto
+(Fase 2) ainda não existem.
 
 ---
 
@@ -222,8 +224,8 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — download paralelo via reqwest/tokio + `HttpPomProvider` (seção 6.2)
 - [x] Marco — comandos CLI: `install`/`add`/`remove`/`update`/`tree`/`why`
 - [x] **Fase 1 completa** — resolução e cache, ponta a ponta
-- [x] Marco — `jvmfast jdk install`/`jdk list` via API do Adoptium (seção 7)
-- [ ] Fase 2 — `jdk use` + resolução de `java-version` no manifesto (em andamento)
+- [x] Marco — `jvmfast jdk install`/`jdk list`/`jdk use` via API do Adoptium (seção 7)
+- [ ] Fase 2 — resolução de `java-version` no manifesto + alias `"lts"` (em andamento)
 - [ ] Fase 3 — build e execução
 - [ ] Fase 4 — interoperabilidade (`import-pom`, `import-gradle`)
 - [ ] Fase 5 — workspace e multi-módulo

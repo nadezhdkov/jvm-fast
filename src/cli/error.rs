@@ -26,6 +26,9 @@ pub enum CliError {
     #[error(transparent)]
     Jdk(#[from] crate::jdk::JdkError),
 
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
+
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
 
@@ -46,4 +49,7 @@ pub enum CliError {
 
     #[error("{0} of {1} artifact download(s) failed")]
     DownloadsFailed(usize, usize),
+
+    #[error("Java {0} is not installed — run `jvmfast jdk install {0}` first")]
+    JavaVersionNotInstalled(String),
 }

@@ -1,5 +1,5 @@
 use jvmfast::domain::VersionReq;
-use jvmfast::manifest::{parse_module, parse_repositories, ManifestError};
+use jvmfast::manifest::{parse_java_version, parse_module, parse_repositories, ManifestError};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -88,4 +88,10 @@ fn parse_repositories_reads_declared_named_repositories() {
 fn parse_repositories_is_empty_when_section_absent() {
     let repositories = parse_repositories(&fixture("valid_minimal.toml")).expect("should parse");
     assert!(repositories.is_empty());
+}
+
+#[test]
+fn parse_java_version_reads_project_java_version() {
+    let java_version = parse_java_version(&fixture("valid_minimal.toml")).expect("should parse");
+    assert_eq!(java_version, "21");
 }
