@@ -1,4 +1,4 @@
-use jvmfast::build::{build, BuildError};
+use jvmfast::build::{build, module_order, BuildError};
 use jvmfast::cache::CacheStore;
 use jvmfast::domain::{LockedPackage, Lockfile, Module, Workspace, WorkspaceConfig};
 use std::path::PathBuf;
@@ -41,6 +41,7 @@ fn workspace_with_module(root: PathBuf, lockfile: Lockfile) -> Workspace {
             declared_dependencies: Vec::new(),
             boms: Vec::new(),
             exclusions: Default::default(),
+            workspace_dependencies: Vec::new(),
         }],
         lockfile,
         config: WorkspaceConfig::default(),
@@ -177,4 +178,122 @@ fn build_uses_cached_artifact_on_classpath_when_present() {
 
     let _ = std::fs::remove_dir_all(&project_dir);
     let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+fn module(name: &str, root: PathBuf, workspace_dependencies: Vec<String>) -> Module {
+    Module {
+        name: name.to_string(),
+        root,
+        declared_dependencies: Vec::new(),
+        boms: Vec::new(),
+        exclusions: Default::default(),
+        workspace_dependencies,
+    }
+}
+
+/// Real, end-to-end proof of the Fase 5 cross-module classpath: "api"
+/// declares a `[workspace-dependencies]` on "core" and its source actually
+/// imports a class `core` defines — this only compiles if `build::build`
+/// (a) built `core` before `api` (topological order) and (b) put `core`'s
+/// `target/classes` on `api`'s `javac -cp`.
+#[test]
+fn build_compiles_a_module_against_a_workspace_dependencys_classes() {
+    let root = temp_dir("workspace-deps-e2e");
+    let cache_root = temp_dir("workspace-deps-e2e-cache");
+    let core_dir = root.join("core");
+    let api_dir = root.join("api");
+
+    std::fs::create_dir_all(core_dir.join("src/main/java/com/exemplo")).unwrap();
+    std::fs::write(
+        core_dir.join("src/main/java/com/exemplo/Greeter.java"),
+        "package com.exemplo;\npublic class Greeter { public static String hello() { return \"hi\"; } }\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(api_dir.join("src/main/java/com/exemplo")).unwrap();
+    std::fs::write(
+        api_dir.join("src/main/java/com/exemplo/Api.java"),
+        "package com.exemplo;\npublic class Api { public static void main(String[] a) { Greeter.hello(); } }\n",
+    )
+    .unwrap();
+
+    let workspace = Workspace {
+        root: root.clone(),
+        modules: vec![
+            module("api", api_dir.clone(), vec!["core".to_string()]),
+            module("core", core_dir.clone(), Vec::new()),
+        ],
+        lockfile: empty_lockfile(),
+        config: WorkspaceConfig::default(),
+    };
+
+    let summaries = build(&workspace, &system_javac(), &cache_root).expect("should build");
+
+    // Topological order: "core" (the dependency) must be built before
+    // "api" (the dependent), even though `modules` above lists "api" first.
+    assert_eq!(summaries[0].module, "core");
+    assert_eq!(summaries[1].module, "api");
+    assert!(api_dir
+        .join("target/classes/com/exemplo/Api.class")
+        .is_file());
+    assert!(core_dir
+        .join("target/classes/com/exemplo/Greeter.class")
+        .is_file());
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+#[test]
+fn build_reports_an_unknown_workspace_dependency_as_a_typed_error() {
+    let root = temp_dir("unknown-workspace-dep");
+    let cache_root = temp_dir("unknown-workspace-dep-cache");
+    let api_dir = root.join("api");
+    std::fs::create_dir_all(&api_dir).unwrap();
+
+    let workspace = Workspace {
+        root: root.clone(),
+        modules: vec![module("api", api_dir, vec!["nonexistent".to_string()])],
+        lockfile: empty_lockfile(),
+        config: WorkspaceConfig::default(),
+    };
+
+    let result = build(&workspace, &system_javac(), &cache_root);
+
+    assert!(matches!(
+        result,
+        Err(BuildError::UnknownWorkspaceModule { module, dependency })
+            if module == "api" && dependency == "nonexistent"
+    ));
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&cache_root);
+}
+
+#[test]
+fn module_order_rejects_a_cycle_between_two_modules() {
+    let modules = vec![
+        module("a", PathBuf::from("a"), vec!["b".to_string()]),
+        module("b", PathBuf::from("b"), vec!["a".to_string()]),
+    ];
+
+    let result = module_order(&modules);
+
+    let Err(BuildError::CyclicModuleDependency(mut names)) = result else {
+        panic!("expected a CyclicModuleDependency error");
+    };
+    names.sort();
+    assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+}
+
+#[test]
+fn module_order_puts_dependencies_before_dependents() {
+    let modules = vec![
+        module("api", PathBuf::from("api"), vec!["core".to_string()]),
+        module("core", PathBuf::from("core"), Vec::new()),
+    ];
+
+    let order = module_order(&modules).expect("should order without a cycle");
+
+    assert_eq!(order, vec![1, 0]);
 }

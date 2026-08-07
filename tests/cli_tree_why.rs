@@ -69,6 +69,22 @@ fn module(name: &str, deps: Vec<Dependency>) -> Module {
         declared_dependencies: deps,
         boms: Vec::new(),
         exclusions: HashMap::new(),
+        workspace_dependencies: Vec::new(),
+    }
+}
+
+fn module_depending_on_workspace_module(
+    name: &str,
+    deps: Vec<Dependency>,
+    workspace_dependencies: Vec<String>,
+) -> Module {
+    Module {
+        name: name.to_string(),
+        root: PathBuf::from("."),
+        declared_dependencies: deps,
+        boms: Vec::new(),
+        exclusions: HashMap::new(),
+        workspace_dependencies,
     }
 }
 
@@ -122,6 +138,53 @@ fn format_why_reports_selected_version_and_mediation_reason() {
     assert!(report.contains("Resolution:"));
     assert!(report.contains("selected: com.example:d:2.0"));
     assert!(report.contains("higher version selected as tie-breaker"));
+}
+
+/// api --(workspace module)--> core -> com.example:a
+/// `format_tree` must render the workspace-module edge itself (not
+/// silently drop it, since `EdgeKind::WorkspaceModule` edges point at a
+/// synthetic module-root `NodeId`, never a real `ResolvedNode`) and keep
+/// descending into `core`'s own external dependency underneath it.
+#[test]
+fn format_tree_renders_a_workspace_module_dependency() {
+    let modules = vec![
+        module_depending_on_workspace_module("api", vec![], vec!["core".to_string()]),
+        module("core", vec![dep("com.example:a", "1.0")]),
+    ];
+    let provider = FixturePomProvider::new().with_pom("com.example:a", "1.0", vec![]);
+
+    let output = resolve(&modules, &provider).expect("should resolve");
+    let tree = format_tree(&output.graph, &output.module_roots, &modules);
+
+    assert!(tree.contains("api\n"));
+    assert!(tree.contains("core (workspace module)\n"));
+    assert!(tree.contains("com.example:a:1.0\n"));
+    // "core (workspace module)" must appear before its own child in the
+    // output — a crude but effective way to check nesting without parsing
+    // the tree's indentation.
+    let core_edge_pos = tree.find("core (workspace module)").unwrap();
+    let dep_pos = tree.find("com.example:a:1.0").unwrap();
+    assert!(core_edge_pos < dep_pos);
+}
+
+/// `format_why` must be able to trace a dependency all the way back to a
+/// module that only reaches it *through* a workspace-module edge — "api"
+/// never declares `com.example:a` directly, only depends on "core", which
+/// does.
+#[test]
+fn format_why_traces_a_dependency_reached_through_a_workspace_module() {
+    let modules = vec![
+        module_depending_on_workspace_module("api", vec![], vec!["core".to_string()]),
+        module("core", vec![dep("com.example:a", "1.0")]),
+    ];
+    let provider = FixturePomProvider::new().with_pom("com.example:a", "1.0", vec![]);
+
+    let output = resolve(&modules, &provider).expect("should resolve");
+    let report = format_why(&output.graph, &output.module_roots, "com.example:a")
+        .expect("coordinate should be in the resolved graph");
+
+    assert!(report.contains("api\n"));
+    assert!(report.contains("core (workspace module)"));
 }
 
 #[test]

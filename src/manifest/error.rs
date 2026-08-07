@@ -19,4 +19,9 @@ pub enum ManifestError {
 
     #[error("invalid dependency coordinate `{0}` — expected `groupId:artifactId`")]
     InvalidCoordinate(String),
+
+    #[error(
+        "[workspace-dependencies] entry `{0}` is `false` — the only valid value is `true` (a workspace module dependency is either declared or absent, never explicitly \"off\")"
+    )]
+    InvalidWorkspaceDependencyValue(String),
 }

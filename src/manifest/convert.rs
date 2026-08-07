@@ -11,6 +11,7 @@ pub fn to_module(manifest: ProjectManifest, root: PathBuf) -> Result<Module, Man
         declared_dependencies: convert_dependencies(manifest.dependencies)?,
         boms: convert_boms(manifest.boms)?,
         exclusions: convert_exclusions(manifest.exclusions)?,
+        workspace_dependencies: convert_workspace_dependencies(manifest.workspace_dependencies)?,
     })
 }
 
@@ -35,6 +36,12 @@ pub fn to_dev_module(
         declared_dependencies: convert_dependencies(manifest.dev_dependencies)?,
         boms: convert_boms(manifest.boms)?,
         exclusions: convert_exclusions(manifest.exclusions)?,
+        // The synthetic dev-dependencies module is never a real workspace
+        // member (never listed in `[workspace].members`, never a compile
+        // target), so it has nothing meaningful to declare a cross-module
+        // dependency of its own here — `[workspace-dependencies]` only
+        // applies to the production `Module` above.
+        workspace_dependencies: Vec::new(),
     }))
 }
 
@@ -80,6 +87,26 @@ fn convert_exclusions(
         result.insert(owner_coordinate, excluded);
     }
     Ok(result)
+}
+
+/// `[workspace-dependencies]` (seção 12, Fase 5) — nomes de módulos, não
+/// coordenadas Maven, então `validate_coordinate` nunca se aplica aqui.
+/// `false` é rejeitado (mesma convenção de `DependencyValue::BomManaged`
+/// não aceitar `false`); a lista final é ordenada alfabeticamente para que
+/// a ordem de compilação topológica (`build::module_order`) seja
+/// determinística mesmo que `HashMap`'s de iteração não sejam.
+fn convert_workspace_dependencies(
+    workspace_dependencies: HashMap<String, bool>,
+) -> Result<Vec<String>, ManifestError> {
+    let mut names = Vec::with_capacity(workspace_dependencies.len());
+    for (name, declared) in workspace_dependencies {
+        if !declared {
+            return Err(ManifestError::InvalidWorkspaceDependencyValue(name));
+        }
+        names.push(name);
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// Regra mínima que a arquitetura de fato especifica (seção 9.3): formato

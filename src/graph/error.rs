@@ -21,4 +21,9 @@ pub enum GraphError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    #[error(
+        "module `{module}` declares a [workspace-dependencies] entry on `{dependency}`, but no module named `{dependency}` exists in this workspace"
+    )]
+    UnknownWorkspaceModule { module: String, dependency: String },
 }

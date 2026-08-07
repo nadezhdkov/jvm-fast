@@ -71,10 +71,19 @@ pub fn build_graph<P: PomProvider>(
     let mut expanded: HashSet<(String, String)> = HashSet::new();
     let mut queue: VecDeque<QueueItem> = VecDeque::new();
 
+    // Two passes over `modules`: `module_roots` must be fully populated
+    // before any module's dependencies are processed, since a
+    // `[workspace-dependencies]` entry can reference a module that appears
+    // *later* in `modules` (declaration order in `[workspace].members`
+    // carries no ordering guarantee for who-depends-on-whom).
     for module in modules {
         let root_id = NodeId(next_id);
         next_id += 1;
         module_roots.insert(module.name.clone(), root_id);
+    }
+
+    for module in modules {
+        let root_id = module_roots[&module.name];
 
         for dep in &module.declared_dependencies {
             let version = resolve_declared_version(dep, bom_table)?;
@@ -86,6 +95,20 @@ pub fn build_graph<P: PomProvider>(
                 depth: 1,
                 kind: EdgeKind::ModuleDeclared,
                 origin_module: module.name.clone(),
+            });
+        }
+
+        for dependency_name in &module.workspace_dependencies {
+            let &to = module_roots.get(dependency_name).ok_or_else(|| {
+                GraphError::UnknownWorkspaceModule {
+                    module: module.name.clone(),
+                    dependency: dependency_name.clone(),
+                }
+            })?;
+            edges.push(GraphEdge {
+                from: root_id,
+                to,
+                kind: EdgeKind::WorkspaceModule,
             });
         }
     }

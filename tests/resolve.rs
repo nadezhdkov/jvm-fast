@@ -63,6 +63,7 @@ fn module(
         declared_dependencies: deps,
         boms,
         exclusions,
+        workspace_dependencies: Vec::new(),
     }
 }
 

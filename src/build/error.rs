@@ -30,4 +30,14 @@ pub enum BuildError {
 
     #[error("could not join classpath entries: {0}")]
     Classpath(#[source] std::env::JoinPathsError),
+
+    #[error(
+        "module `{module}` declares a [workspace-dependencies] entry on `{dependency}`, but no module named `{dependency}` exists in this workspace"
+    )]
+    UnknownWorkspaceModule { module: String, dependency: String },
+
+    #[error(
+        "cyclic [workspace-dependencies] involving module(s): {0:?} — a module can't (transitively) depend on itself"
+    )]
+    CyclicModuleDependency(Vec<String>),
 }

@@ -25,6 +25,15 @@ pub fn format_why(
 
     let mut output = format!("{coordinate}:{}\n\nRequested by:\n\n", target_node.selected);
 
+    // Inverso de `module_roots` (seção 12, Fase 5) — mesma necessidade de
+    // `cli::tree::format_tree`: um passo do caminho pode ser o `NodeId`
+    // sintético de outro módulo (uma aresta `EdgeKind::WorkspaceModule`
+    // atravessada pela BFS abaixo), não um `ResolvedNode` real.
+    let root_names: HashMap<NodeId, &str> = module_roots
+        .iter()
+        .map(|(name, id)| (*id, name.as_str()))
+        .collect();
+
     let mut module_names: Vec<&String> = module_roots.keys().collect();
     module_names.sort();
 
@@ -38,15 +47,17 @@ pub fn format_why(
         output.push('\n');
         let steps: Vec<&NodeId> = path.iter().skip(1).collect();
         for (i, &step_id) in steps.iter().enumerate() {
-            let Some(node) = graph.nodes.get(step_id) else {
+            let label = if let Some(node) = graph.nodes.get(step_id) {
+                format!("{}:{}", node.coordinate, node.selected)
+            } else if let Some(&name) = root_names.get(step_id) {
+                format!("{name} (workspace module)")
+            } else {
                 continue;
             };
             let indent = "    ".repeat(i);
             output.push_str(&indent);
             output.push_str("└── ");
-            output.push_str(&node.coordinate);
-            output.push(':');
-            output.push_str(&node.selected);
+            output.push_str(&label);
             output.push('\n');
         }
         output.push('\n');

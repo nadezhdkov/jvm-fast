@@ -86,6 +86,7 @@ fn module(name: &str, dependencies: Vec<Dependency>) -> Module {
         declared_dependencies: dependencies,
         boms: Vec::new(),
         exclusions: HashMap::new(),
+        workspace_dependencies: Vec::new(),
     }
 }
 
@@ -100,6 +101,22 @@ fn module_with_exclusions(
         declared_dependencies: dependencies,
         boms: Vec::new(),
         exclusions,
+        workspace_dependencies: Vec::new(),
+    }
+}
+
+fn module_with_workspace_dependencies(
+    name: &str,
+    dependencies: Vec<Dependency>,
+    workspace_dependencies: Vec<String>,
+) -> Module {
+    Module {
+        name: name.to_string(),
+        root: PathBuf::from("."),
+        declared_dependencies: dependencies,
+        boms: Vec::new(),
+        exclusions: HashMap::new(),
+        workspace_dependencies,
     }
 }
 
@@ -381,4 +398,61 @@ fn fetch_failure_is_wrapped_as_typed_error() {
     let result = build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider);
 
     assert!(matches!(result, Err(GraphError::Fetch { .. })));
+}
+
+#[test]
+fn workspace_dependency_becomes_a_workspace_module_edge_between_module_roots() {
+    let modules = vec![
+        module_with_workspace_dependencies("api", vec![], vec!["core".to_string()]),
+        module("core", vec![]),
+    ];
+    let provider = FixturePomProvider::new();
+
+    let graph =
+        build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider).expect("should build");
+
+    let api_root = graph.module_roots["api"];
+    let core_root = graph.module_roots["core"];
+    assert!(graph.edges.iter().any(|edge| edge.from == api_root
+        && edge.to == core_root
+        && edge.kind == EdgeKind::WorkspaceModule));
+    // A workspace-module edge never introduces a resolution candidate —
+    // there's no version to mediate for a sibling module.
+    assert!(graph.candidates.is_empty());
+}
+
+#[test]
+fn workspace_dependency_on_a_module_declared_later_still_resolves() {
+    // "api" is processed before "core" appears in `modules`, but
+    // `build_graph` must still find `core`'s root — module_roots is fully
+    // populated in a first pass before any dependency (declared or
+    // workspace) is processed.
+    let modules = vec![
+        module_with_workspace_dependencies("api", vec![], vec!["core".to_string()]),
+        module("core", vec![]),
+    ];
+    let provider = FixturePomProvider::new();
+
+    let graph =
+        build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider).expect("should build");
+
+    assert_eq!(graph.module_roots.len(), 2);
+}
+
+#[test]
+fn workspace_dependency_on_an_unknown_module_is_a_typed_error() {
+    let modules = vec![module_with_workspace_dependencies(
+        "api",
+        vec![],
+        vec!["nonexistent".to_string()],
+    )];
+    let provider = FixturePomProvider::new();
+
+    let result = build_graph(&modules, &HashMap::new(), &HashMap::new(), &provider);
+
+    assert!(matches!(
+        result,
+        Err(GraphError::UnknownWorkspaceModule { module, dependency })
+            if module == "api" && dependency == "nonexistent"
+    ));
 }

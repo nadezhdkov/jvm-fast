@@ -78,6 +78,7 @@ fn diamond_dependency_resolves_via_higher_version_at_same_depth() {
         ],
         boms: Vec::new(),
         exclusions: HashMap::new(),
+        workspace_dependencies: Vec::new(),
     }];
     let provider = FixturePomProvider::new()
         .with_pom(
@@ -134,6 +135,7 @@ fn direct_dependency_wins_over_deeper_transitive_with_higher_version() {
         ],
         boms: Vec::new(),
         exclusions: HashMap::new(),
+        workspace_dependencies: Vec::new(),
     }];
     let provider = FixturePomProvider::new()
         .with_pom("com.exemplo:commons", "1.8", vec![])

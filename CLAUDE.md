@@ -97,16 +97,21 @@ JDKs, and global `config.toml` beyond `[defaults]`), Fase 3 (see below),
 and Fase 4 (multi-project Gradle builds, `java-version` extraction from
 Gradle, and `import-pom`'s parent-POM-inheritance gap) — each is a typed,
 rejected-not-faked error or a documented report note today, not silent
-scope creep. **Fase 5 (workspace e multi-módulo, seção 12) has started**:
-`[workspace].members` in the root `project.toml` is now real —
+scope creep. **Fase 5 (workspace e multi-módulo, seção 12) is well
+underway**: `[workspace].members` in the root `project.toml` is real —
 `workspace::load_workspace` loads every declared member as a genuine
-`Module` from its own `<member>/project.toml`, and `install`/`build`
-already resolve/compile all of them correctly with zero changes to
-`resolve`/`graph`/`mediation`/`lockfile`/`build`/`testing` themselves
-(they were already written to operate on `Workspace.modules: Vec<Module>`,
-never a lone module, since Fase 1). Cross-module dependencies, build
-ordering, and incremental build are still unimplemented — see the Fase 5
-writeup below for exactly what's done versus open.
+`Module` from its own `<member>/project.toml` — and a module can now
+declare `[workspace-dependencies]` on another module in the same
+workspace, which `graph::build_graph` turns into a real
+`EdgeKind::WorkspaceModule` edge and `build::build` turns into both
+correct topological compile ordering (`build::module_order`) and an
+inter-module classpath (a dependency's `target/classes` reaches its
+dependent's `javac -cp`) — verified end to end compiling one module's
+source against a class only another module defines, with real `javac`.
+Incremental build, and giving member modules their own
+`[run]`/`[dev-dependencies]`/`[repositories]`/`java-version` instead of
+only the root's, are still open — see the Fase 5 writeup below for
+exactly what's done versus what's left.
 
 - [`docs/architecture.md`](docs/architecture.md) — the full architecture spec
   for jvm-fast, a native Rust CLI ("uv for Java") for dependency management,
@@ -722,33 +727,71 @@ ordering/incremental build don't exist yet**:
   backward-compat single-module behavior unchanged, duplicate-name
   rejection, missing-member-manifest rejection) alongside the pre-existing
   single-module tests, none of which needed to change.
-
-**Known, deliberate gaps inside Fase 5 so far** (this is genuinely just
-the foundation — most of seção 12's Fase 5 scope remains open):
-
-- **No cross-module dependencies.** There is still no way for one
-  workspace module to declare "depend on sibling module X" in
-  `[dependencies]` — `Dependency`/`DependencyValue` only model an explicit
-  version string or BOM-managed (`true`); a coordinate matching another
-  module's name would just be looked up as an ordinary Maven coordinate
-  against `PomProvider` and fail (or, worse, silently resolve against a
-  same-named artifact on Maven Central). `EdgeKind::WorkspaceModule`
-  still exists in the domain model but nothing constructs it anywhere in
-  `src/` — `graph::build_graph` never recognizes "this coordinate is
-  actually a sibling module." This is the next natural Fase 5 slice.
-  Until it exists, a multi-module workspace is really N independent
-  modules sharing one resolution pass and one lockfile, not modules that
-  can depend on each other.
-- **No topological build ordering.** `build::build`/`testing::run_tests`
-  iterate `workspace.modules` in whatever order `[workspace].members`
-  declared them — since cross-module dependencies don't exist yet (above),
-  there's no ordering to violate today, but this needs to land together
-  with (or before) cross-module dependency support, not after.
-- **No inter-module classpath.** Every module currently compiles against
-  the exact same flat classpath (`build::classpath::locked_classpath`,
-  built once from the shared `project.lock`) — a module's compiled
-  `target/classes` is never added to another module's classpath, since
-  there's no declared dependency between them yet to justify it.
+- **Cross-module dependencies — implemented.** A module can now declare
+  `[workspace-dependencies]` (a separate table from `[dependencies]`,
+  deliberately — a workspace module reference has no version to
+  resolve/mediate, so mixing it into the same table as real Maven
+  coordinates would blur two different concepts sharing only TOML syntax;
+  chosen over overloading `[dependencies]` with a `{ module = true }`
+  value shape after weighing both). Syntax: `[workspace-dependencies]\ncore
+  = true` — keyed by module *name*, `false` rejected as a typed
+  `ManifestError::InvalidWorkspaceDependencyValue` (mirrors
+  `DependencyValue::BomManaged` never accepting `false` either).
+  `Module` gained `workspace_dependencies: Vec<String>`
+  (`manifest::convert::to_module`, sorted alphabetically for determinism —
+  `HashMap` iteration order isn't). `graph::build_graph` now does two
+  passes over `modules` (module_roots must be fully populated before any
+  module's dependencies are processed, since a workspace-dependency can
+  reference a module declared *later* in the slice) and, for each
+  `workspace_dependencies` entry, emits a real `EdgeKind::WorkspaceModule`
+  edge between the two modules' synthetic root `NodeId`s — the enum
+  variant that had existed, unconstructed, since before Fase 5 started. A
+  reference to a nonexistent module name is
+  `GraphError::UnknownWorkspaceModule`, not a silent no-op or a fallthrough
+  to an ordinary (and wrong) Maven coordinate lookup.
+- **`jvmfast tree`/`jvmfast why` render workspace-module edges.** Both
+  `cli::tree::format_tree`/`cli::why::format_why` previously silently
+  dropped any graph edge whose `to` wasn't a real `ResolvedNode` (the
+  `let Some(node) = graph.nodes.get(...) else { continue }` guard that
+  already protected against unknown `NodeId`s) — exactly what a
+  `WorkspaceModule` edge's `to` is, since it points at another module's
+  synthetic root, never a resolved artifact. Both now build a reverse
+  `NodeId → module name` map from `module_roots` and render those edges as
+  `"<name> (workspace module)"`, then keep recursing/tracing into that
+  module's own children — so `jvmfast why` can now report a dependency
+  reached transitively *through* a sibling module's declaration, not just
+  ones a module lists directly.
+- **Topological build ordering — implemented.** `build::order::module_order`
+  (Kahn's algorithm over `Module.workspace_dependencies`) is a new,
+  independent function — deliberately *not* reusing `graph::build_graph`'s
+  traversal, since `build` never re-resolves or touches the network
+  (seção 8's own rule) and topological order is a pure function of
+  `workspace.modules` alone. Same validation duplicated on purpose (an
+  unknown module name is `BuildError::UnknownWorkspaceModule`, the same
+  category `graph::build_graph` already rejects at resolve time, just
+  independently since `build` doesn't go through that code path); a cycle
+  (A depends on B depends on A) is `BuildError::CyclicModuleDependency`
+  with every module involved named, never a partial build that silently
+  compiles half a cycle and calls it success.
+- **Inter-module classpath — implemented.** `build::build` now compiles
+  `workspace.modules` in `module_order`'s order (not declaration order)
+  and, for each module, adds every `workspace_dependencies` entry's
+  already-compiled `target/classes` directory to that module's `javac -cp`
+  — on top of the shared external classpath every module already got.
+  Verified end to end with real `javac`, not just unit-level plumbing:
+  `tests/build.rs::build_compiles_a_module_against_a_workspace_dependencys_classes`
+  has an `api` module whose source genuinely imports and calls a class
+  `core` defines — it only compiles successfully if both the ordering and
+  the classpath assembly are correct.
+- **Not touched in this pass**: `testing::run_tests` (`jvmfast test`)
+  still iterates modules in declaration order with its own, different,
+  pre-existing implicit classpath-accumulation behavior (every module's
+  test compile already sees *every previously-processed* module's
+  production+test classes, regardless of any declared dependency,
+  ordered by `[workspace].members` order — a cruder mechanism than
+  `build`'s new explicit one, and one this pass deliberately left alone
+  rather than half-reconciling under time pressure; worth revisiting so
+  `test` and `build` agree on what "sees another module's classes" means).
 - **No incremental build.** Content-hash-based skip-if-unchanged per
   module (seção 12's "build incremental... reaproveitando o mesmo
   mecanismo de content-addressable storage da seção 5, agora aplicado a
@@ -1009,19 +1052,24 @@ since Fase 1) remains a real limitation for POMs that lean on it (e.g.
 `com.google.guava:guava`'s own `<dependencyManagement>`-managed `jsr305`
 dependency, and `import-pom`'s own parent-inheritance gap above) — worth
 calling out as a candidate for a future pick, though not promised or
-started here. **Fase 5 (workspace e multi-módulo) has now started too**:
+started here. **Fase 5 (workspace e multi-módulo) is well underway now**:
 `workspace::load_workspace` really loads N modules from
-`[workspace].members` and every downstream consumer (`install`, `build`,
-`test`, resolution, mediation, the lockfile) already operates on them
-correctly with zero core changes — proof that the Fase 1-4 "operate on
-`&[Module]`, never index `[0]`" discipline paid off exactly as promised.
-The much bigger remaining slice of Fase 5 — cross-module dependencies
-(`EdgeKind::WorkspaceModule` is still dead code), topological build
-ordering, inter-module classpaths, and incremental build — is *not*
-started (see "Known, deliberate gaps inside Fase 5" above); cross-module
-dependencies specifically is the natural next pick within Fase 5, since
-nothing else in that list is meaningful without it. Outside Fase 5, the
-natural next picks are, in no particular priority order: `jvmfast init`
+`[workspace].members`; every downstream consumer (`install`, resolution,
+mediation, the lockfile) already operated on them correctly with zero
+core changes, proof that the Fase 1-4 "operate on `&[Module]`, never
+index `[0]`" discipline paid off exactly as promised; and, on top of
+that, cross-module dependencies (`[workspace-dependencies]`,
+`EdgeKind::WorkspaceModule` is real code now, not a dead enum variant),
+topological build ordering (`build::module_order`), and inter-module
+classpaths in `jvmfast build` are all implemented and verified end to end
+with real `javac` (see the Fase 5 writeup above). What's left inside
+Fase 5: incremental build (content-hash skip-if-unchanged), reconciling
+`jvmfast test`'s own different implicit classpath-accumulation behavior
+with `build`'s new explicit one, and deciding whether/how member modules
+get their own `[run]`/`[dev-dependencies]`/`[repositories]`/`java-version`
+instead of only the root manifest's (see "Known, deliberate gaps inside
+Fase 5" above for all of these). Outside Fase 5, the natural next picks
+are, in no particular priority order: `jvmfast init`
 (seção 9.2 — still the only way to get a `project.toml` onto disk without
 hand-writing one is `import-pom`/`import-gradle`, both of which require an
 existing Maven/Gradle project to import *from*); credentials/auth (seção
@@ -1033,16 +1081,17 @@ gap above); or any of the other Fase 1/Fase 2/Fase 3/Fase 4 gaps listed
 above, each independently pickable.
 
 **Multi-módulo (Fase 5) compatibility rules** — binding since before Fase 5
-started, and now proven in practice by real multi-module loading (see the
-Fase 5 writeup above): resolution must always operate on
-`Workspace.modules: Vec<Module>`, never a lone `Module`;
+started, and now proven in practice by real multi-module loading and
+cross-module dependencies (see the Fase 5 writeup above): resolution must
+always operate on `Workspace.modules: Vec<Module>`, never a lone `Module`;
 `VersionRequest.origin_module` and `LockedRequest.module` must always be
 populated, even with only one possible value in a single-module workspace;
 `GraphEdge`/`ResolvedNode` must never be merged into one struct;
-`EdgeKind::WorkspaceModule` stays declared even while still unconstructed
-anywhere in `src/` (cross-module dependencies aren't implemented yet — see
-the Fase 5 gaps above); CLI code must iterate `workspace.modules`, never
-index `[0]`.
+`EdgeKind::WorkspaceModule` (now real, constructed by `graph::build_graph`
+from `Module.workspace_dependencies`) must never be conflated with
+`EdgeKind::External` — a workspace-module edge has no `ResolvedNode` on
+its `to` side, ever, since there's no version to mediate for a sibling
+module; CLI code must iterate `workspace.modules`, never index `[0]`.
 
 ## Core architectural model (from docs/architecture.md)
 

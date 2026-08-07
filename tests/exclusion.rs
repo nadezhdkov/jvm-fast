@@ -10,6 +10,7 @@ fn module_with_exclusions(name: &str, exclusions: HashMap<String, Vec<String>>) 
         declared_dependencies: Vec::new(),
         boms: Vec::new(),
         exclusions,
+        workspace_dependencies: Vec::new(),
     }
 }
 

@@ -23,6 +23,17 @@ pub struct ProjectManifest {
     pub repositories: HashMap<String, String>,
     pub run: Option<RunSection>,
     pub workspace: Option<WorkspaceSection>,
+    /// `[workspace-dependencies]` (seção 12, Fase 5) — a module's
+    /// dependency on another module in the *same* workspace, keyed by
+    /// module name (never a `groupId:artifactId` Maven coordinate) with a
+    /// mandatory `true` value, mirroring `DependencyValue::BomManaged`'s
+    /// "no meaningful `false`" convention. Deliberately a separate table
+    /// from `[dependencies]` rather than a special value shape there — a
+    /// workspace module reference has no version to resolve/mediate, so
+    /// mixing it into the same table as real Maven coordinates would blur
+    /// two different concepts sharing only TOML syntax.
+    #[serde(rename = "workspace-dependencies", default)]
+    pub workspace_dependencies: HashMap<String, bool>,
 }
 
 #[derive(Deserialize)]
