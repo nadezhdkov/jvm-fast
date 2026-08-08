@@ -2,9 +2,24 @@ use super::error::VersionParseError;
 
 /// Versão no formato `major.minor.patch[-prerelease]` — o subconjunto de
 /// semver que docs/architecture.md seção 6.1 usa nos exemplos de range.
-/// Coordenadas Maven que fogem desse formato (ex. `5.10.2.RELEASE`, só
-/// `5.10`) não são suportadas por este parser — escopo deliberado desta
-/// passada, não uma limitação escondida.
+///
+/// **[BLOQUEADOR — ver docs/architecture.md seção 16.2]** Este parser é
+/// adequado para interpretar a sintaxe de autoria `^`/`~` do `project.toml`
+/// (uma escolha do jvm-fast) e **inadequado para ordenar versões vindas de
+/// um repositório**, que é como ele acabou sendo usado por
+/// `mediation::compare_versions` e `graph::resolve_version_range`. Versões
+/// Maven não são semver, e os contraexemplos não são exóticos:
+/// `31.1-jre`/`33.0.0-jre` (a linha estável inteira do Guava — `-jre` é
+/// qualificador de plataforma-alvo, não pré-release, e `31.1` nem tem três
+/// componentes), `5.3.30.RELEASE`, `1.0`, `9999.0-empty-to-avoid-conflict-with-guava`.
+///
+/// A consequência mais grave é silenciosa: quando `parse` falha,
+/// `mediation::compare_versions` cai em `str::cmp`, onde `"10.0" < "9.0"` —
+/// então o critério "versão maior vence" da seção 6.2 seleciona a menor, de
+/// forma determinística e sem aviso. A correção é implementar a ordenação
+/// `ComparableVersion` do próprio Maven num módulo separado e restringir
+/// `SemVer` ao parsing de `^`/`~`; nenhum caminho de ordenação pode manter
+/// fallback para `str::cmp`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemVer {
     pub major: u64,

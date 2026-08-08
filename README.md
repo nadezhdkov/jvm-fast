@@ -11,10 +11,17 @@
 
 **Um "uv para Java" — CLI nativo em Rust para dependências, JDK e build de projetos Java single-module, sem setup.**
 
-> `docs/architecture.md` foi escrito antes do código — é a especificação viva
-> do projeto, não uma descrição do que já existe. Ver
-> [`docs/architecture.md`](docs/architecture.md) para o racional completo de
-> design.
+> `docs/architecture.md` seções 1–15 foram escritas antes do código — são a
+> especificação viva do projeto, não uma descrição do que já existe. A
+> **seção 16** foi escrita depois, confrontando a implementação com POMs
+> reais do Maven Central, e é onde estão os bloqueadores de correção
+> conhecidos. Ver [`docs/architecture.md`](docs/architecture.md) para o
+> racional completo de design.
+
+> **Estado atual:** as cinco fases estão implementadas, mas o resolvedor
+> ainda **não** produz o mesmo conjunto de dependências que o Maven em
+> grafos reais — ver [Status do Projeto](#status-do-projeto). Não é
+> utilizável em um projeto Java de produção hoje.
 
 ---
 
@@ -263,9 +270,44 @@ para detalhes; estado detalhado dos marcos em
 - [x] Marco — `jvmfast test`: `[dev-dependencies]` + JUnit Platform Console Standalone (seção 8.1)
 - [x] **Fase 3 completa** — build/run/test, ponta a ponta
 - [x] Marco — `jvmfast import-pom`: gera `project.toml` a partir de um `pom.xml` existente (seção 10)
-- [ ] Marco — `jvmfast import-gradle` via Gradle Tooling API (seção 10)
-- [ ] **Fase 4 completa** — interoperabilidade, ponta a ponta
-- [ ] Fase 5 — workspace e multi-módulo
+- [x] Marco — `jvmfast import-gradle` via Gradle Tooling API (seção 10)
+- [x] **Fase 4 completa** — interoperabilidade, ponta a ponta
+- [x] Marco — `[workspace].members`, `[workspace-dependencies]`, ordem topológica, build incremental por módulo
+- [x] **Fase 5 completa** — workspace e multi-módulo, ponta a ponta
+- [x] Marco — `jvmfast init` (seção 9.2)
+
+### Cobertura de funcionalidade ≠ paridade com o Maven
+
+As fases acima medem **cobertura de funcionalidade**, e por essa régua estão
+cumpridas. Uma revisão da implementação contra POMs reais do Maven Central
+(registrada em [`docs/architecture.md#16`](docs/architecture.md)) mostrou que
+essa régua não mede o que importa: o resolvedor consome o POM **como ele vem
+do repositório**, enquanto o Maven resolve contra o **POM efetivo** (cadeia
+de `<parent>`, `${propriedades}` interpoladas, `<dependencyManagement>`,
+`<optional>` removido).
+
+Na prática, `jackson-databind:2.17.0` — o exemplo de manifesto da seção 3 da
+própria arquitetura — não resolve: suas duas dependências de compilação
+declaram `<version>${jackson.version.core}</version>` e
+`${jackson.version.annotations}`, propriedades definidas no POM pai.
+
+Bloqueadores de correção conhecidos, em ordem técnica de ataque:
+
+- [ ] **16.1** — POM efetivo (herança de `<parent>`, interpolação,
+      `<dependencyManagement>`, `<optional>`)
+- [ ] **16.2** — ordenação de versões do Maven (`ComparableVersion`); versões
+      Maven não são semver, e a mediação hoje cai em comparação de string
+- [ ] **16.4** — poda do grafo (transitivas de versões que perderam a
+      mediação ainda entram no classpath)
+- [ ] **16.3** — cache de POMs (`poms/`/`metadata/`, especificados na seção 5
+      e não implementados) e resolução paralela por nível
+- [ ] **16.5** — `type`/`classifier` na identidade do artefato
+- [ ] **16.6** — flags globais (`--json`, `--offline`, `-v`) e subcomando `cache`
+- [ ] **16.7** — snapshots (suporte ou rejeição tipada)
+
+Critério de aceitação proposto no lugar de "Fase N completa": resolver
+`org.springframework.boot:spring-boot-starter-web:3.3.0` e exigir igualdade
+de conjunto com a saída de `mvn dependency:list` para o mesmo POM.
 
 ---
 

@@ -9,6 +9,14 @@ referem-se a "jvm-fast", exemplos de comando usam `jvmfast`.
 
 ## 1. Objetivo e escopo
 
+> **Nota de leitura (adicionada após as Fases 1–5).** As seções 1–15 são a
+> especificação, escrita antes do código. A **seção 16** foi escrita depois,
+> confrontando a implementação com POMs reais do Maven Central, e registra
+> onde esta especificação é omissa ou incorreta sobre a semântica do
+> ecossistema Maven — em particular a efetivação do POM (16.1), a ordenação
+> de versões (16.2) e a arquitetura de concorrência da resolução (16.3).
+> Onde as duas divergirem, a seção 16 é a mais recente e prevalece.
+
 Ferramenta de linha de comando, binário único nativo, para gerenciamento de dependências,
 JDK e execução de projetos Java, priorizando velocidade de resolução e ausência de setup.
 Não substitui Maven/Gradle em builds multi-módulo complexos com plugins de empacotamento
@@ -502,6 +510,11 @@ Decisões de design:
   Nunca é obrigatório: `why` funciona corretamente parseando o `project.lock`
   em memória mesmo sem esse cache existir
 
+> **Ver seção 16.3.** Os diretórios `poms/` e `metadata/` acima estão
+> especificados mas **não implementados** — `src/cache/` tem apenas
+> `artifacts/` e `index.db`. Sem eles, toda resolução refaz todos os
+> round-trips de POM. É o item de maior ganho e menor custo da seção 16.
+
 **Limpeza de cache:** `jvmfast cache clean` remove todo o cache global.
 `jvmfast cache clean --artifacts` remove apenas artefatos JAR (mantém JDKs e
 metadados). `jvmfast cache info` exibe espaço em disco utilizado por categoria.
@@ -557,6 +570,11 @@ flowchart TD
 ```
 
 ### 6.1. Resolução de version ranges (`^`, `~`)
+
+> **Ver seção 16.2.** Esta subseção assume que versões de repositório são
+> semver. Elas não são (`31.1-jre`, `5.3.30.RELEASE`, `1.0`), e a regra de
+> pré-release abaixo, aplicada sobre um parser semver, exclui indevidamente
+> linhas estáveis como a do Guava.
 
 Antes de qualquer mediação, cada `VersionReq` do manifesto (seção 3) precisa
 virar uma lista de versões concretas candidatas. Isso acontece numa etapa
@@ -621,6 +639,13 @@ Fluxo por comando (`jvmfast install`, `jvmfast run`, `jvmfast build`):
 3. **Resolução de BOMs** — baixa/cacheia POMs dos BOMs declarados, monta
    tabela `coordenada → versão gerenciada`, preenche versões faltantes nas
    dependências declaradas (seção 3.3)
+   > **Ver seção 16.1 e 16.4.** O passo 4 abaixo consome o POM como ele vem
+   > do repositório; o Maven consome o **POM efetivo** (cadeia de `<parent>`,
+   > `${propriedades}` interpoladas, `<dependencyManagement>` aplicado,
+   > `<optional>` removido). E expandir todas as versões candidatas antes de
+   > mediar, como descrito aqui, deixa no grafo as transitivas de versões
+   > que perderam a mediação — o Maven as poda.
+
 4. **Resolução de grafo** — coleta as dependências declaradas de todos os
    módulos do workspace, busca metadados (POM remoto ou cache local) e monta
    um único grafo de transitivas para o workspace inteiro. **Exclusions**
@@ -715,12 +740,24 @@ multi-módulo (seção 12, Fase 5), o mesmo princípio se aplica por módulo,
 reaproveitando o mecanismo de content-addressable storage já usado para
 artefatos baixados (seção 5).
 
-**Annotation processing** — a v1 suporta apenas annotation processors
-descobertos automaticamente via `META-INF/services` (o mecanismo padrão do
-`javac`). Isso cobre o caso mais comum (Lombok, MapStruct, Dagger, etc.)
-sem exigir configuração no manifesto. Configuração explícita de processor
-paths, opções de processamento (`-Akey=value`), e processors que requerem
-setup especial ficam fora da v1, registrados como escopo futuro.
+**Annotation processing** — a v1 suporta descoberta automática via
+`META-INF/services` (o mecanismo padrão do `javac`, cobre o caso mais
+comum: Lombok, MapStruct, Dagger, etc., sem exigir nada no manifesto) e,
+além disso, configuração explícita via `[build]`:
+
+```toml
+[build]
+annotation-processors = ["com.example.MyProcessor"]  # -processor com.example.MyProcessor
+
+[build.processor-args]
+key = "value"  # -Akey=value
+```
+
+`[build]`/`[build.processor-args]` inteiros são opcionais — sua ausência
+significa "só descoberta automática", o comportamento original da v1.
+Processor *paths* (`-processorpath`, para um processor que não está no
+classpath de compilação normal) e processors que exigem setup especial
+continuam fora de escopo.
 
 **JPMS (`module-info.java`) fica fora do escopo inicial**, registrado como
 decisão de escopo e não como comportamento indefinido. A v1 assume sempre
@@ -774,6 +811,11 @@ e `--json` (para scripting/CI), seguindo o padrão que ferramentas modernas de
 CLI (uv, cargo, gh) adotaram.
 
 **Flags globais** disponíveis em todos os comandos:
+
+> **Ver seção 16.6.** Nenhuma das flags globais desta tabela existe hoje em
+> `src/cli/`, nem o subcomando `jvmfast cache`. `--json` e `--offline` não
+> são conveniência: o primeiro é a interface de automação que a seção 11
+> pressupõe, o segundo sustenta o princípio offline-first da mesma seção.
 
 | Flag | Efeito |
 |---|---|
@@ -1217,6 +1259,23 @@ Esses testes devem usar **fixtures locais** (POMs sintéticos servidos por um
 servidor HTTP mock, sem depender de Maven Central real) para serem rápidos e
 determinísticos.
 
+**Complemento obrigatório (seção 16.8):** fixtures locais provam que o
+algoritmo faz o que esta especificação diz, mas não que a especificação
+corresponde ao Maven — foi exatamente essa a lacuna que deixou 16.1, 16.2 e
+16.4 passarem por 228 testes verdes. A suíte precisa de ao menos um caso de
+grafo real comparado contra `mvn dependency:list`. À tabela acima somam-se,
+como categorias de fixture:
+
+| Categoria | Casos |
+|---|---|
+| Herança de `<parent>` | Versão e propriedade herdadas do pai, cadeia de 2+ níveis |
+| Interpolação | `${prop}` do próprio POM, do pai, e built-ins (`${project.version}`) |
+| `dependencyManagement` do POM | Transitiva sem `<version>` preenchida pelo POM que a declara |
+| `<optional>` | Optional direta entra; optional transitiva não |
+| Ordenação Maven | `1.10 > 1.9`, `33.0.0-jre` não é pré-release, `1.0-alpha < 1.0` |
+| Poda | Transitiva exclusiva da versão rejeitada não entra no classpath |
+| `type`/`classifier` | Classifier resolve para a URL certa; `type=pom` não vira download de jar |
+
 ## 14. Fora do escopo inicial
 
 Decisões de escopo permanentes para a v1, distintas de riscos (seção 13) —
@@ -1242,7 +1301,12 @@ não são incerteza técnica, são corte deliberado:
   Gradle — fica para depois do `import-pom` estabilizar
 - **Snapshots** (`-SNAPSHOT`) — resolução de snapshots Maven tem semântica
   própria (timestamp-based, `maven-metadata.xml` diferente); v1 trata
-  snapshots como artefatos normais sem suporte a unique snapshots
+  snapshots como artefatos normais sem suporte a unique snapshots.
+  **Reclassificado — ver seção 16.7:** desde o Maven 3 o default é unique
+  snapshots, então "tratar como artefato normal" resulta em 404 contra
+  qualquer repositório com configuração padrão, e o caso de uso corporativo
+  que a seção 3 apresenta (`nexus.empresa.com`) é justamente onde
+  `-SNAPSHOT` domina. Ou há suporte, ou há rejeição tipada — não silêncio
 
 ## 15. Distribuição e instalação
 
@@ -1354,3 +1418,362 @@ quer rodar o script de instalação:
 - `jvmfast self update` fica fora da v1 (seção 14) — instalação inicial via
   script/gerenciador de pacote é resolvida por esta seção; atualização é um
   problema relacionado mas deliberadamente adiado
+
+## 16. Lacunas de correção e viabilidade (revisão pós-implementação)
+
+As seções 1–15 foram escritas **antes** do código, como especificação. Esta
+seção foi escrita **depois** das Fases 1–5, lendo a implementação contra POMs
+reais do Maven Central. Ela não é uma lista de escopo cortado — isso é a
+seção 14, e continua válida. É a lista de pontos onde a especificação é
+**omissa ou incorreta** sobre a semântica real do ecossistema Maven, e onde
+a implementação atual, em consequência, produz resultado **errado ou
+ausente**, não apenas reduzido.
+
+A distinção importa porque a seção 14 descreve decisões que podem ser
+mantidas indefinidamente sem prejuízo, enquanto esta seção descreve o que
+separa o projeto de ser utilizável em um projeto Java real.
+
+### 16.1. Efetivação do POM (`EffectivePom`) — o bloqueador principal
+
+O Maven nunca resolve um `pom.xml` como ele está escrito no repositório. O
+que alimenta a resolução é o **POM efetivo**: o POM bruto acrescido da
+cadeia de `<parent>` (recursiva), com `${propriedades}` interpoladas, com
+`<dependencyManagement>` (próprio, herdado e importado) aplicado às
+dependências que omitem `<version>`, e com `<optional>true</optional>`
+removido do conjunto transitivo.
+
+A implementação atual consome o POM **bruto**: `pom::parse_pom_xml` declara
+explicitamente que não interpola `${...}` e não segue `<parent>`, e
+`graph::build_graph` empurra `PomDependency.version` direto para a fila do
+BFS. As `managed_dependencies` são parseadas mas só consultadas para BOMs
+declarados no manifesto do usuário — nunca para o `<dependencyManagement>`
+do próprio POM sendo expandido.
+
+O efeito não é degradação; é falha. Dois exemplos verificados contra o
+Maven Central real:
+
+```text
+com.fasterxml.jackson.core:jackson-databind:2.17.0
+  → <parent> jackson-base
+  → dependência: jackson-core,        <version>${jackson.version.core}</version>
+  → dependência: jackson-annotations, <version>${jackson.version.annotations}</version>
+     (ambas as propriedades definidas no POM pai, não neste)
+
+com.google.guava:guava:33.0.0-jre
+  → <parent> guava-parent
+  → dependências jsr305, checker-qual, error_prone_annotations,
+    j2objc-annotations: sem <version> nenhuma (geridas pelo
+    <dependencyManagement> do pai)
+```
+
+No primeiro caso o resolvedor tenta buscar
+`.../jackson-annotations/${jackson.version.annotations}/jackson-annotations-${jackson.version.annotations}.pom`
+e recebe 404, que vira `GraphError::Fetch`. No segundo, a versão chega como
+string vazia e a URL formada é igualmente inexistente. Vale registrar que
+`jackson-databind` é **o exemplo usado na seção 3 deste próprio documento**
+— a dependência que o manifesto de referência declara não resolve na
+implementação atual.
+
+**Arquitetura exigida:** um estágio novo entre "buscar POM" e "virar
+candidato do grafo", com tipo próprio:
+
+```text
+ParsedPom (bruto, o que veio do repositório)
+      ↓  resolver cadeia de <parent> (recursiva, profundidade limitada)
+      ↓  mesclar <properties>: filho sobrepõe pai; mais as built-in
+      ↓     (${project.version}, ${project.groupId}, ${project.artifactId})
+      ↓  interpolar ${...} em version/groupId/artifactId/scope
+      ↓  mesclar <dependencyManagement> (próprio + herdado + importado)
+      ↓     e preencher versões omitidas
+      ↓  descartar <optional>true</optional> do conjunto transitivo
+EffectivePom (o que a resolução pode consumir)
+```
+
+Regras que essa etapa precisa respeitar:
+
+- `ParsedPom` e `EffectivePom` são **tipos distintos**, e `build_graph`
+  aceita apenas o segundo. É a mesma disciplina que a seção 3.1 aplica a
+  `Module` (declaração) versus `Workspace` (resolução): um POM bruto nunca
+  deve conseguir chegar ao resolvedor, e o sistema de tipos é o que garante
+  isso — não uma convenção de chamada.
+- A profundidade da cadeia de `<parent>` é limitada, pelo mesmo motivo e com
+  o mesmo default (10) já adotado para import transitivo de BOM na seção 3.3.
+- Um `${...}` que sobra depois da interpolação é **erro tipado**, nunca uma
+  tentativa de fetch com o literal — buscar uma URL contendo `${` é uma
+  falha de rede disfarçada de falha de resolução, exatamente a confusão de
+  categorias que a seção 11 proíbe.
+- `<optional>` precisa ser lido pelo parser (hoje `text_target` reconhece
+  apenas `groupId`/`artifactId`/`version`/`type`/`scope`). Uma dependência
+  optional declarada **diretamente** por um módulo continua valendo; o que
+  não propaga é o caso transitivo — mesma assimetria que a seção 6.2 já
+  aplica a `provided`/`test` via `propagates_transitively`.
+- POMs efetivos são cacheáveis por `coordenada@versão` com TTL permanente,
+  pela mesma razão que a seção 5 dá para POMs brutos (um POM publicado não
+  muda).
+
+### 16.2. Modelo de versão — versões Maven não são semver
+
+`version::SemVer::parse` exige exatamente três componentes numéricos e trata
+tudo após o primeiro `-` como pré-release. O ecossistema Maven não segue
+semver, e os contraexemplos não são exóticos:
+
+| Versão real | O que acontece hoje |
+|---|---|
+| `33.0.0-jre`, `31.1-jre` (Guava) | `-jre` é lido como pré-release; `31.1` nem sequer parseia (dois componentes) |
+| `5.3.30.RELEASE` (Spring legado) | quatro componentes, não parseia |
+| `1.0`, `2.5` (comuns em libs antigas) | dois componentes, não parseia |
+| `9999.0-empty-to-avoid-conflict-with-guava` | dependência real declarada pelo Guava; lida como pré-release |
+| `21.0.5+11` (builds de JDK) | metadado `+` não modelado |
+
+As consequências são três, e a primeira é a mais grave:
+
+1. **Mediação silenciosamente errada.** `mediation::compare_versions` cai em
+   `str::cmp` quando qualquer um dos lados não parseia. Em comparação
+   lexicográfica, `"10.0" < "9.0"` e `"1.10" < "1.9"`. O critério
+   "versão maior vence" da seção 6.2 então seleciona a versão *menor*, de
+   forma determinística e sem aviso. Um resultado errado determinístico é
+   pior aqui que um erro tipado: ele é reproduzível, então parece correto.
+2. **Ranges inutilizáveis em bibliotecas reais.** `graph::resolve_version_range`
+   filtra as versões publicadas por `SemVer::parse().ok()`; para o Guava,
+   isso descarta a linha de releases inteira e o range falha com
+   `UnresolvedVersionRange`.
+3. **Regra de pré-release aplicada onde não cabe.** A seção 6.1 determina,
+   corretamente, que pré-releases não entram automaticamente. Mas `-jre` e
+   `-android` no Guava são qualificadores de **plataforma-alvo**, não de
+   estabilidade — a regra da seção 6.1, implementada sobre um parser semver,
+   exclui automaticamente a linha estável mais usada do ecossistema.
+
+**Correção exigida:** implementar a ordenação de versões do próprio Maven
+(`ComparableVersion`): segmentação por `.`, `-` e transições dígito↔letra;
+segmentos numéricos comparados numericamente e com zeros à esquerda
+irrelevantes; segmentos qualificadores com ordem conhecida
+(`alpha` < `beta` < `milestone` < `rc`/`cr` < `snapshot` < `""` (release)
+< `sp`), e qualificadores desconhecidos ordenados depois de `""`,
+lexicograficamente entre si.
+
+Duas regras de fronteira decorrem disso:
+
+- `SemVer` permanece útil **apenas** para interpretar a sintaxe de autoria
+  `^`/`~` do `project.toml` (seção 6.1), que é uma escolha do jvm-fast. Ele
+  nunca deve ordenar versões vindas de um repositório.
+- Nenhum caminho de ordenação pode ter fallback para `str::cmp`. Se uma
+  versão não é ordenável, isso é um erro tipado — não um palpite estável.
+
+### 16.3. A resolução é sequencial e sem cache — a inversão de performance
+
+Este é o ponto onde a premissa do projeto e a implementação se contradizem
+diretamente.
+
+`pom::HttpPomProvider` usa `reqwest::blocking` e `graph::build_graph` busca
+um POM por vez, dentro do laço do BFS. O comentário de módulo em
+`http.rs` justifica isso com "sem concorrência real a ganhar" — a
+afirmação está invertida. E a seção 5 deste documento especifica dois
+diretórios de cache que **não existem** em `src/cache/` (que tem apenas
+`artifacts/` e `index.db`):
+
+```text
+poms/       # TTL permanente     — especificado na seção 5, não implementado
+metadata/   # TTL 24h            — especificado na seção 5, não implementado
+```
+
+A combinação significa que **toda** resolução refaz **todos** os
+round-trips de POM, em série, mesmo para coordenadas que não mudaram.
+
+O que está paralelizado (`download::DownloadClient`, com `tokio`, semáforo
+global e por host) é o download de JARs — justamente a parte que o cache
+content-addressable já torna barata: numa execução morna, nenhum JAR é
+baixado. O que roda em série é a busca de metadados — justamente a parte
+que acontece em toda resolução fria e que domina o tempo de parede. A
+paralelização foi aplicada à metade errada do problema.
+
+A ordem de grandeza importa para a tese do projeto. O grafo de um
+`spring-boot-starter-web` tem algumas centenas de POMs; a 50–80 ms de RTT
+cada, em série, isso é dezenas de segundos, contra o segundo aproximado que
+Maven ou Gradle levam com repositório local morno. Na métrica que dá nome
+ao projeto, o jvm-fast seria hoje **mais lento** que a ferramenta que
+pretende substituir.
+
+**Correção exigida**, nesta ordem:
+
+1. Implementar `poms/` e `metadata/` como a seção 5 já especifica. É o
+   ganho maior e o mais barato: o segundo `install` deixa de tocar a rede.
+2. Tornar a construção do grafo **paralela por nível**: o BFS já processa
+   por profundidade, então todos os POMs de profundidade *N* podem ser
+   buscados concorrentemente antes de expandir o nível *N+1*, reusando a
+   mesma disciplina de cliente e semáforo por host de `download`. O
+   determinismo é preservado porque a mediação (seção 6.2) é função pura do
+   conjunto de `VersionRequest` coletados, não da ordem de chegada deles —
+   mas isso passa a ser uma invariante que precisa de teste explícito, e não
+   apenas uma propriedade acidental do percurso serial.
+
+Vale nomear o motivo de fundo: a velocidade do `uv`, que este documento toma
+como referência desde o título, vem de **paralelismo de metadados**, não de
+paralelismo de download. Sem o item 2 acima, a comparação com o `uv` não se
+sustenta.
+
+### 16.4. Poda do grafo — transitivas de versões perdedoras entram no classpath
+
+`build_graph` controla expansão com um conjunto `expanded` chaveado por
+`(coordenada, versão)`. Quando a mesma coordenada é pedida em duas versões,
+**as duas são expandidas**, e as transitivas de ambas viram candidatas,
+arestas do grafo e — depois da mediação, que só decide a versão da
+coordenada em conflito, não o destino das subárvores — entradas do
+lockfile e do classpath.
+
+O Maven poda: quando uma versão perde a mediação, a subárvore que ela
+trouxe deixa de fazer parte da resolução. Um artefato que só existia no
+grafo porque a versão rejeitada dependia dele não deve estar no classpath.
+
+O efeito prático é um classpath com artefatos que nada na resolução final
+referencia, um `project.lock` que os registra como se fossem necessários, e
+um `jvmfast tree` que os exibe. É uma divergência de resultado em relação ao
+Maven, não uma diferença de desempenho.
+
+**Correção exigida:** a resolução precisa ser iterativa em vez de um passe
+único "expandir tudo, mediar no fim". A forma mais direta, preservando a
+precedência da seção 6.2: expandir um nível, mediar as coordenadas
+conhecidas, podar as subárvores das versões rejeitadas, e só então expandir
+o nível seguinte. Isso muda a fronteira entre `graph` e `mediation` —
+`mediate` deixa de ser uma etapa posterior a `build_graph` e passa a ser
+chamada por ele a cada nível — o que é uma mudança de organização de código,
+não de modelo de dados: `CandidateNode`, `GraphEdge` e `ResolvedNode`
+continuam exatamente como a seção 3.1 os define.
+
+Observação de ordem: este item vem **antes** do 16.3. Paralelizar a
+construção de um grafo que ainda produz o conjunto errado apenas chega mais
+rápido à resposta errada.
+
+### 16.5. Identidade de artefato — coordenada não é `groupId:artifactId`
+
+Todo o sistema — `Dependency.coordinate`, a chave de `coordinate_ids` no
+grafo, `maven::artifact_path`, as chaves do `project.lock` — assume que
+`groupId:artifactId` identifica um artefato. No Maven, a identidade é
+`groupId:artifactId:type:classifier`.
+
+Casos reais que isso não cobre:
+
+- `io.netty:netty-transport-native-epoll` com classifier `linux-x86_64` — o
+  artefato sem classifier existe, mas é um jar praticamente vazio; o binário
+  nativo está sob o classifier.
+- Dependências com `<type>pom</type>` fora de um contexto de import de BOM —
+  não existe `.jar` publicado, e a tentativa de baixar um produz 404.
+- `<type>test-jar</type>` e classifiers `tests`/`sources`.
+
+Hoje `<classifier>` sequer é lido pelo parser, e `artifact_path` não tem
+onde encaixá-lo: a URL formada aponta para o artefato sem classifier, então
+o resultado é 404 ou — pior — o jar errado, baixado e verificado com
+sucesso contra o checksum do jar errado.
+
+**Correção exigida:** alargar o tipo de coordenada para carregar `type`
+(default `jar`) e `classifier` (default ausente), propagando isso até o
+layout de repositório e as chaves do lockfile.
+
+Isso **muda o formato do `project.lock`**, e é por isso que aparece aqui e
+não numa lista de melhorias futuras: quanto mais tempo o formato atual
+existir em repositórios de usuários, mais caro fica. A seção 15.4 já
+desacopla a versão do formato de lock da versão do binário exatamente para
+permitir esse tipo de mudança — é o momento de usar esse desacoplamento,
+antes de haver base instalada.
+
+### 16.6. Superfície de CLI documentada e ausente
+
+A seção 9 especifica flags globais e a seção 5 especifica um subcomando que
+não existem no `src/cli/`:
+
+| Documentado | Seção | Estado real |
+|---|---|---|
+| `--verbose`/`-v`, `--quiet`/`-q`, `--no-color` | 9, 11.1 | Não existem |
+| `--json` (NDJSON) | 9, 11.1 | Não existe; nenhum comando emite JSON |
+| `--offline` | 9, 11 | Não existe |
+| `--yes`/`-y` global | 9 | Existe apenas por comando (`install`, `update`, `jdk use`) |
+| `jvmfast cache clean [--artifacts]`, `cache info` | 5, 9 | Subcomando `Cache` não existe |
+
+Dois deles não são conveniência:
+
+- **`--json`** é descrito na seção 9 como a interface preferencial para
+  automação e CI, e a seção 11 posiciona os exit codes como sinalização
+  *complementar* a ela. Sem `--json`, os exit codes são a única interface
+  programática que existe, o que inverte a relação que o documento descreve.
+- **`--offline`** sustenta o princípio "nenhuma operação de rede acontece
+  silenciosamente" da seção 11. Sem ele não há como *afirmar* que uma
+  execução não tocou a rede — apenas esperar que não tenha tocado. Depois de
+  16.3 (cache de POMs), ele também vira a forma de verificar que o cache
+  está de fato sendo usado.
+
+O `STYLE.md` já se declara parcialmente aspiracional quanto a cores, hints e
+`--verbose`. Esta seção registra a mesma ressalva para as seções 9 e 11.1
+deste documento, que até aqui não a traziam.
+
+### 16.7. Snapshots — reclassificar de "fora de escopo" para "bloqueador corporativo"
+
+A seção 14 coloca snapshots fora da v1, tratando-os como "artefatos normais
+sem suporte a unique snapshots". Vale reclassificar, porque a mesma seção 3
+apresenta um repositório corporativo (`nexus.empresa.com`) como caso de uso
+de primeira classe — e num Nexus interno, `-SNAPSHOT` não é um caso de
+borda, é o caso dominante.
+
+O detalhe técnico que torna isso um bloqueador e não uma limitação: desde o
+Maven 3, o default é **unique snapshots**. O arquivo publicado não se chama
+`foo-1.0-SNAPSHOT.jar`, e sim `foo-1.0-20240115.103045-7.jar`, com o
+timestamp e o build number listados no `maven-metadata.xml` do diretório
+versionado — um arquivo diferente do `maven-metadata.xml` de nível de
+artefato que `maven::metadata_url` já constrói. Tratar snapshot "como
+artefato normal" resulta em 404 contra qualquer repositório com a
+configuração padrão.
+
+Ou o suporte a snapshot é implementado, ou uma coordenada `-SNAPSHOT`
+precisa ser rejeitada com erro tipado e mensagem explícita — o que não pode
+continuar é a suposição silenciosa de que o layout não-único vale.
+
+### 16.8. Veredicto de viabilidade
+
+**O esqueleto está certo, e é o que seria caro consertar depois.** As
+decisões estruturais deste documento se sustentaram na prática: a separação
+declaração/resolução (`Module` vs `Workspace`) permitiu que a Fase 5 fosse
+trabalho de superfície, como a seção 12 previu; a separação
+topologia/estado (`GraphEdge` vs `ResolvedNode`) permitiu que `tree` e
+`why` passassem a ler só o lockfile sem reabrir o modelo; o cache
+content-addressable com escrita atômica, os erros tipados e a escolha da
+Tooling API sobre parsing de stdout continuam corretos.
+
+Nenhum item de 16.1 a 16.7 exige reabrir essas decisões. Todos cabem nas
+costuras que já existem: 16.1 é um estágio novo antes de `build_graph`;
+16.2 é um módulo de ordenação substituindo `SemVer` nos caminhos de
+comparação; 16.4 é um laço dentro de `build_graph` reusando os mesmos
+tipos; 16.5 alarga um tipo de coordenada; 16.3 é cache e concorrência sobre
+um `PomProvider` que já é um trait. Isso é a evidência mais forte a favor da
+arquitetura: os erros encontrados são localizados, e é a arquitetura que os
+mantém localizados.
+
+**O que não se sustenta é a afirmação de completude.** A implementação atual
+resolve corretamente POMs com versões literais e sem `<parent>` — uma
+minoria do que existe no Maven Central. A régua para "um uv para Java" não é
+a lista de comandos da seção 9, que está essencialmente cumprida; é
+resolver um `spring-boot-starter-web` com o mesmo resultado que o Maven e em
+menos tempo. Hoje o projeto não faz nem uma coisa nem a outra: falha na
+resolução (16.1, 16.2, 16.4) e, quando ela passar a funcionar, será mais
+lento que o Maven até 16.3 estar feito.
+
+**Ordem recomendada**, por dependência técnica e não por esforço:
+
+```text
+16.1  efetivação do POM        → sem isso, quase nada mais é observável
+16.2  ordenação de versão      → mediação e ranges dependem dela
+16.4  poda do grafo            → define o conjunto resolvido correto
+16.3  cache + paralelismo      → acelera um resultado que já está correto
+16.5  type/classifier          → muda formato de lock; antes de base instalada
+16.6  superfície de CLI        → --offline verifica 16.3; --json habilita CI
+16.7  snapshots                → suporte ou rejeição tipada, não silêncio
+```
+
+**Métrica de aceitação sugerida, no lugar de "Fase N completa".** As fases
+da seção 12 mediram cobertura de funcionalidade, e por essa régua a v1 está
+de fato completa — o que este documento mostra é que a régua não mede o que
+importa. A substituição proposta é um teste de integração único e
+verificável: resolver `org.springframework.boot:spring-boot-starter-web:3.3.0`
+e comparar o conjunto `coordenada@versão` resultante com a saída de
+`mvn dependency:list` para o mesmo POM, exigindo igualdade. Enquanto esse
+teste não passar, nenhuma afirmação de paridade com o Maven é verificável —
+e é dele que a seção 13.1 precisa como complemento: os fixtures locais
+provam que o algoritmo está implementado como especificado, mas só um grafo
+real prova que a especificação corresponde ao Maven.
